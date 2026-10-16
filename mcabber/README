@@ -1,14 +1,33 @@
- Hello, and thanks for trying mcabber.
+ Hello, and thanks for trying mcabber-ng, a fork of mcabber.
 
-For installation instructions, have a look at the INSTALL file.
+For installation instructions, have a look at the INSTALL file.  Run
+./autogen.sh first; LuaJIT (or Lua 5.1) development files are required.
+"make check" runs the unit tests.
 
-A configuration file is necessary to start mcabber.  Its name is
-$HOME/.mcabber/mcabberrc (or $HOME/.mcabberrc).
+A configuration file is necessary to start mcabber-ng.  It is a Lua script:
+$XDG_CONFIG_HOME/mcabber-ng/init.lua (usually ~/.config/mcabber-ng/init.lua).
 
-A sample configuration file, "mcabberrc.example", is provided in this
-directory.  Copy it and modify it to fit your needs.
+A sample configuration file, "init.lua.example", is provided in this
+directory.  Copy it and modify it to fit your needs.  "mcabber-ng -n" checks
+the configuration and prints the resulting settings.
 
-You can use mcabber "-f" option to specify another configuration file.
+You can use the "-f" option to specify another configuration file.
+
+
+* WHAT'S NEW IN MCABBER-NG
+
+  - Lua configuration: options, aliases, key bindings (commands or Lua
+    functions), event handlers (mc.on), timers, themes.
+  - Readable key names: "Alt+j", "Ctrl+Left", "F5" instead of "M106"...
+  - Multi-line messages: Alt+Enter inserts a line break, the input line
+    grows.  Pasted text is not sent line by line (bracketed paste, or
+    detection of fast input); see the paste_mode option.
+  - Configurable message format, roster items and status lines
+    (templates or Lua functions).
+  - Styles with 256 and 24-bit colors, frames around the windows, themes
+    (mcabber.themes.modern, mcabber.themes.classic).
+
+See the manual page (doc/mcabber.1.txt) for the details.
 
 
 * FEATURES
