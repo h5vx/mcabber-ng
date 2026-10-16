@@ -50,4 +50,4 @@ mcabber/include/config.h.in
 mcabber/mcabber/config.h.in
 mcabber/aclocal.m4
 mcabber/configure~
-build/
+build*/
