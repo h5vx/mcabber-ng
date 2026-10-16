@@ -628,6 +628,30 @@ mc.alias {
 mc.set {
   -- Set use_mouse to 1 to map mouse buttons like keys (WheelUp, WheelDown...).
   -- use_mouse = 1,
+
+  -- Input line
+  -- Messages can have several lines: Alt+Enter (or Ctrl+j) inserts a line
+  -- break.  The input line grows up to 'input_max_rows' rows (default 6).
+  -- input_max_rows = 6,
+  --
+  -- Pasted text
+  -- 'paste_mode' sets what happens when text with several lines is pasted:
+  --   "insert"      insert the text in the input line; Enter sends it as one
+  --                 message (default)
+  --   "confirm"     ask: Enter inserts the text, "s" sends it line by line,
+  --                 Esc discards it
+  --   "send_lines"  send (or run) each line, like typed lines
+  -- paste_mode = "insert",
+  --
+  -- Pastes are detected with the terminal "bracketed paste" mode (set
+  -- 'paste_bracketed' to 0 to disable it), or, if the terminal doesn't
+  -- support it, when at least 'paste_burst_min' keys including Enter are
+  -- received at once (set 'paste_detect' to 0 to disable this).  Such a
+  -- paste ends when no key is received for 'paste_timeout_ms' milliseconds.
+  -- paste_bracketed = 1,
+  -- paste_detect = 1,
+  -- paste_burst_min = 8,
+  -- paste_timeout_ms = 30,
 }
 
 -- Key bindings

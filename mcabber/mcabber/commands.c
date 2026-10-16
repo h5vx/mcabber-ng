@@ -529,6 +529,28 @@ void process_command(const char *line, guint iscmd)
   g_free(xpline);
 }
 
+//  process_line_allows_newlines(line)
+// Return TRUE if the line can contain newlines: messages can, but commands
+// only if they send a message (/say, /say_to, or an alias to them).
+gboolean process_line_allows_newlines(const char *line)
+{
+  char *xpline;
+  cmd *c;
+  gboolean ok;
+
+  if (scr_get_multimode() == 2)   // Verbatim multi-line mode
+    return TRUE;
+  if (*line != COMMAND_CHAR || line[1] == COMMAND_CHAR)
+    return TRUE;
+
+  xpline = expandalias(line);
+  c = cmd_get(xpline);
+  ok = c && (c->func == &do_say || c->func == &do_say_to);
+  if (xpline != line)
+    g_free(xpline);
+  return ok;
+}
+
 //  process_line(line)
 // Process a command/message line.
 // If this isn't a command, this is a message and it is sent to the
@@ -4128,6 +4150,16 @@ static void do_iline(char *arg)
     readline_iline_start();
   } else if (!strcasecmp(arg, "iline_end")) {
     readline_iline_end();
+  } else if (!strcasecmp(arg, "buffer_start")) {
+    readline_buffer_start();
+  } else if (!strcasecmp(arg, "buffer_end")) {
+    readline_buffer_end();
+  } else if (!strcasecmp(arg, "newline")) {
+    readline_insert_newline();
+  } else if (!strcasecmp(arg, "line_up_or_hist")) {
+    readline_line_up_or_hist();
+  } else if (!strcasecmp(arg, "line_down_or_hist")) {
+    readline_line_down_or_hist();
   } else if (!strcasecmp(arg, "iline_fdel")) {
     readline_forward_kill_iline();
   } else if (!strcasecmp(arg, "iline_bdel")) {

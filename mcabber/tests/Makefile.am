@@ -1,5 +1,5 @@
 # Unit tests for the code in ../mcabber/libmcpure.a
-check_PROGRAMS = test_utf8 test_keys
+check_PROGRAMS = test_utf8 test_keys test_layout test_inputlayout test_paste
 TESTS = $(check_PROGRAMS)
 
 # Globals normally provided by the full program
@@ -12,3 +12,6 @@ LDADD = $(top_builddir)/mcabber/libmcpure.a libstubs.a $(GLIB_LIBS)
 
 test_utf8_SOURCES = test_utf8.c
 test_keys_SOURCES = test_keys.c
+test_layout_SOURCES = test_layout.c
+test_inputlayout_SOURCES = test_inputlayout.c
+test_paste_SOURCES = test_paste.c

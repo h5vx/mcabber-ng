@@ -93,7 +93,17 @@ PageUp and PageDown keys are used to move in the roster.
 
 Up and Down arrow keys can be used to move in the input line history; they
 jump to the previous/next line from the history beginning with the same string
-(from first column to the cursor column).
+(from first column to the cursor column).  When the input line has several
+rows, they move the cursor between the rows first.
+
+Messages can have several lines: Alt+Enter (or Ctrl+j) inserts a line break,
+and Enter sends the whole message.  The input line grows as needed (see the
+'input_max_rows' option).
+
+Pasted text is not sent line by line: it is inserted in the input line, and
+Enter sends it as one message.  Pasting is detected with the terminal
+"bracketed paste" mode, or, when the terminal doesn't support it, when many
+keys including Enter are received at once.  See the 'paste_mode' option.
 
 To send a message, move to the chosen buddy in the buddylist, type your
 message and hit enter.  If the line begins with a slash, this will be
@@ -103,10 +113,13 @@ leave the chat mode.
 Here is a quick description of the default key bindings:
 
 Esc::           Disable chat mode
-Ctrl-a::        Go to the beginning of the input line
-Ctrl-e::        Go to the end of the input line
+Enter::         Send the message (or run the command)
+Alt+Enter, Ctrl-j:: Insert a line break
+Ctrl-a, Home::  Go to the beginning of the current line
+Ctrl-e, End::   Go to the end of the current line
+Ctrl-Home/Ctrl-End:: Go to the beginning/end of the input buffer
 Ctrl-l::        Force a refresh
-Up/Down::       Move in the input line history
+Up/Down::       Move between the rows of the input line, or in the input line history
 PgUp/PgDown::   Move inside the roster (buddylist)
 Tab::           Complete current word, in the input line
 Ctrl-g::        Cancel completion
@@ -115,8 +128,8 @@ Ctrl-d::        Send/terminate a multi-line message
 Ctrl-p/Ctrl-n:: Scroll up/down half a screen in the buffer window (chat mode)
 Ctrl-Left::     Move the cursor back to the start of the current or previous word
 Ctrl-Right::    Move the cursor forward to the end of the current or next word
-Ctrl-u::        Delete from beginning of the line to the cursor
-Ctrl-k::        Delete from the cursor to the end of line
+Ctrl-u::        Delete from beginning of the line to the cursor (or join the line with the previous one)
+Ctrl-k::        Delete from the cursor to the end of line (or join the line with the next one)
 Ctrl-w::        Backward kill word
 Ctrl-t::        Transpose chars
 Ctrl-o::        Accept line and put the next history line in the input line (accept-line-and-down-history)

@@ -23,6 +23,7 @@
 #include <string.h>
 #include <time.h>
 #include <ctype.h>
+#include <unistd.h>
 
 #include <config.h>
 #include <locale.h>
@@ -56,6 +57,9 @@
 #include "histolog.h"
 #include "settings.h"
 #include "mlua.h"
+#include "layout.h"
+#include "inputlayout.h"
+#include "paste.h"
 #include "utils.h"
 #include "xmpp.h"
 #include "main.h"
@@ -67,13 +71,15 @@ int COLOR_ATTRIB[COLOR_max];
 
 #define DEFAULT_LOG_WIN_HEIGHT (5)
 #define DEFAULT_ROSTER_WIDTH    24
-#define CHAT_WIN_HEIGHT (maxY-2-1-Log_Win_Height)
+#define CHAT_WIN_HEIGHT (Layout.chat.h)
 
 #define DEFAULT_ATTENTION_CHAR '!'
 
 const char *LocaleCharSet = "C";
 
 static unsigned short int Log_Win_Height;
+static int Input_Win_Height = 1;
+static ui_layout_t Layout;
 static unsigned short int Roster_Width;
 static gboolean colors_stalled = FALSE;
 
@@ -81,7 +87,6 @@ static gboolean colors_stalled = FALSE;
 static guint ui_attn_sign_prio_level_muc = ROSTER_UI_PRIO_MUC_HL_MESSAGE;
 static guint ui_attn_sign_prio_level     = ROSTER_UI_PRIO_ATTENTION_MESSAGE;
 
-static inline void check_offset(int);
 static void scr_cancel_current_completion(void);
 static void scr_end_current_completion(void);
 static void scr_insert_text(const char*);
@@ -149,7 +154,8 @@ static char       inputLine[INPUTLINE_LENGTH+1];
 static char       maskLine[INPUTLINE_LENGTH+1];
 #endif
 static char      *ptr_inputline;
-static short int  inputline_offset;
+static guint input_scroll;   // First visible row of the input line
+static il_layout_t InputLayout;
 static int    completion_started;
 static GList *cmdhisto;
 static GList *cmdhisto_cur;
@@ -714,14 +720,18 @@ void scr_init_bindings(void)
     { "Left",       "iline bchar" },
     { "Right",      "iline fchar" },
     { "Ctrl+g",     "iline compl_cancel" },
-    { "Up",         "iline hist_beginning_search_bwd" },
-    { "Down",       "iline hist_beginning_search_fwd" },
+    { "Up",         "iline line_up_or_hist" },
+    { "Down",       "iline line_down_or_hist" },
     { "PgUp",       "roster up" },
     { "PgDn",       "roster down" },
     { "Home",       "iline iline_start" },
     { "Ctrl+a",     "iline iline_start" },
     { "End",        "iline iline_end" },
     { "Ctrl+e",     "iline iline_end" },
+    { "Ctrl+Home",  "iline buffer_start" },
+    { "Ctrl+End",   "iline buffer_end" },
+    { "Alt+Enter",  "iline newline" },
+    { "Ctrl+j",     "iline newline" },
     { "Ctrl+o",     "iline iline_accept_down_hist" },
     { "Ctrl+u",     "iline iline_bdel" },
     { "Ctrl+k",     "iline iline_fdel" },
@@ -793,10 +803,42 @@ static gchar *scr_color_guard(const gchar *key, const gchar *new_value)
   return g_strdup(new_value);
 }
 
+// Bracketed paste mode: the terminal sends \e[200~ before and \e[201~
+// after pasted text.  write() is used so that it works in signal handlers.
+static gboolean bracketed_paste;
+
+static void bracketed_paste_disable(void)
+{
+  if (bracketed_paste) {
+    static const char seq[] = "\033[?2004l";
+    ssize_t ret = write(STDOUT_FILENO, seq, sizeof(seq) - 1);
+    (void)ret;  // Nothing we can do if it fails
+    bracketed_paste = FALSE;
+  }
+}
+
+static void bracketed_paste_enable(void)
+{
+  static gboolean atexit_done;
+  static const char seq[] = "\033[?2004h";
+  const char *opt = settings_opt_get("paste_bracketed");
+
+  if (opt && !atoi(opt))
+    return;
+  if (write(STDOUT_FILENO, seq, sizeof(seq) - 1) < 0)
+    return;
+  bracketed_paste = TRUE;
+  if (!atexit_done) {
+    atexit(bracketed_paste_disable);
+    atexit_done = TRUE;
+  }
+}
+
 void scr_init_curses(void)
 {
   /* Key sequences initialization */
   init_keycodes();
+  il_layout_init(&InputLayout);
 
   initscr();
   raw();
@@ -805,6 +847,7 @@ void scr_init_curses(void)
   intrflush(stdscr, FALSE);
   start_color();
   use_default_colors();
+  bracketed_paste_enable();
 #ifdef NCURSES_MOUSE_VERSION
   if (settings_opt_get_int("use_mouse"))
     mousemask(ALL_MOUSE_EVENTS, NULL);
@@ -858,6 +901,7 @@ void scr_init_curses(void)
 void scr_terminate_curses(void)
 {
   if (!Curses) return;
+  bracketed_paste_disable();
   clear();
   refresh();
   endwin();
@@ -916,8 +960,7 @@ guint scr_gettextwidth(void)
 
 guint scr_gettextheight(void)
 {
-  // log window, two status bars and one input line
-  return maxY - Log_Win_Height - 3;
+  return Layout.chat.h;
 }
 
 guint scr_getlogwinheight(void)
@@ -1667,8 +1710,7 @@ void scr_draw_main_window(unsigned int fullinit)
 {
   int requested_size;
   gchar *ver, *message;
-  int chat_y_pos, chatstatus_y_pos, log_y_pos;
-  int roster_x_pos, chat_x_pos;
+  layout_opts_t lopts;
 
   if (maxY < 4)
     maxY = 4;
@@ -1677,63 +1719,48 @@ void scr_draw_main_window(unsigned int fullinit)
     requested_size = DEFAULT_LOG_WIN_HEIGHT;
   else
     requested_size = settings_opt_get_int("log_win_height");
-  if (requested_size <= 0) {
-    Log_Win_Height = 0;
-  } else {
-    if (maxY >= requested_size + 4)
-      Log_Win_Height = requested_size;
-    else {
-      Log_Win_Height = maxY - 4;
-    }
-  }
+  lopts.log_height = MAX(requested_size, 0);
 
   if (roster_hidden) {
-    Roster_Width = 0;
+    lopts.roster_width = 0;
   } else {
     requested_size = settings_opt_get_int("roster_width");
     if (requested_size > 1)
-      Roster_Width = requested_size;
+      lopts.roster_width = requested_size;
     else if (requested_size == 1)
-      Roster_Width = 2;
+      lopts.roster_width = 2;
     else
-      Roster_Width = DEFAULT_ROSTER_WIDTH;
+      lopts.roster_width = DEFAULT_ROSTER_WIDTH;
   }
 
   log_win_on_top = (settings_opt_get_int("log_win_on_top") == 1);
   roster_win_on_right = (settings_opt_get_int("roster_win_on_right") == 1);
 
-  if (log_win_on_top) {
-    log_y_pos = 0;
-    chatstatus_y_pos = Log_Win_Height;
-    chat_y_pos = Log_Win_Height + 1;
-  } else {
-    chat_y_pos = 0;
-    chatstatus_y_pos = CHAT_WIN_HEIGHT;
-    log_y_pos = CHAT_WIN_HEIGHT + 1;
-  }
+  lopts.lines = maxY;
+  lopts.cols = maxX;
+  lopts.log_on_top = log_win_on_top;
+  lopts.roster_on_right = roster_win_on_right;
+  lopts.input_height = Input_Win_Height;
+  layout_compute(&lopts, &Layout);
+  Log_Win_Height = Layout.log.h;
+  Roster_Width = Layout.roster.w;
 
-  if (roster_win_on_right) {
-    roster_x_pos = maxX - Roster_Width;
-    chat_x_pos = 0;
-  } else {
-    roster_x_pos = 0;
-    chat_x_pos = Roster_Width;
-  }
+#define NEWWIN(r) newwin((r).h, (r).w, (r).y, (r).x)
+#define MOVEWIN(win, r) do { wresize((win), MAX((r).h, 1), MAX((r).w, 1)); \
+                             mvwin((win), (r).y, (r).x); } while (0)
 
   if (fullinit) {
     if (!winbufhash)
       winbufhash = g_hash_table_new_full(g_str_hash, g_str_equal,
                                          g_free, g_free);
     /* Create windows */
-    rosterWnd = newwin(CHAT_WIN_HEIGHT, Roster_Width, chat_y_pos, roster_x_pos);
-    chatWnd   = newwin(CHAT_WIN_HEIGHT, maxX - Roster_Width, chat_y_pos,
-                       chat_x_pos);
-    activechatWnd = newwin(CHAT_WIN_HEIGHT, maxX - Roster_Width, chat_y_pos,
-                           chat_x_pos);
-    logWnd    = newwin(Log_Win_Height, maxX, log_y_pos, 0);
-    chatstatusWnd = newwin(1, maxX, chatstatus_y_pos, 0);
-    mainstatusWnd = newwin(1, maxX, maxY-2, 0);
-    inputWnd  = newwin(1, maxX, maxY-1, 0);
+    rosterWnd = NEWWIN(Layout.roster);
+    chatWnd   = NEWWIN(Layout.chat);
+    activechatWnd = NEWWIN(Layout.chat);
+    logWnd    = NEWWIN(Layout.log);
+    chatstatusWnd = NEWWIN(Layout.chatstatus);
+    mainstatusWnd = NEWWIN(Layout.mainstatus);
+    inputWnd  = NEWWIN(Layout.input);
     if (!rosterWnd || !chatWnd || !logWnd || !inputWnd) {
       scr_terminate_curses();
       fprintf(stderr, "Cannot create windows!\n");
@@ -1747,23 +1774,12 @@ void scr_draw_main_window(unsigned int fullinit)
     wbkgd(mainstatusWnd,  get_color(COLOR_STATUS));
   } else {
     /* Resize/move windows */
-    wresize(rosterWnd, CHAT_WIN_HEIGHT, Roster_Width);
-    wresize(chatWnd, CHAT_WIN_HEIGHT, maxX - Roster_Width);
-    wresize(logWnd, Log_Win_Height, maxX);
-
-    mvwin(chatWnd, chat_y_pos, chat_x_pos);
-    mvwin(rosterWnd, chat_y_pos, roster_x_pos);
-    mvwin(logWnd, log_y_pos, 0);
-
-    // Resize & move chat status window
-    wresize(chatstatusWnd, 1, maxX);
-    mvwin(chatstatusWnd, chatstatus_y_pos, 0);
-    // Resize & move main status window
-    wresize(mainstatusWnd, 1, maxX);
-    mvwin(mainstatusWnd, maxY-2, 0);
-    // Resize & move input line window
-    wresize(inputWnd, 1, maxX);
-    mvwin(inputWnd, maxY-1, 0);
+    MOVEWIN(rosterWnd, Layout.roster);
+    MOVEWIN(chatWnd, Layout.chat);
+    MOVEWIN(logWnd, Layout.log);
+    MOVEWIN(chatstatusWnd, Layout.chatstatus);
+    MOVEWIN(mainstatusWnd, Layout.mainstatus);
+    MOVEWIN(inputWnd, Layout.input);
 
     werase(chatWnd);
   }
@@ -1839,25 +1855,14 @@ static void resize_win_buffer(gpointer key, gpointer value, gpointer data)
 {
   winbuf_t *wbp = value;
   struct dimensions *dim = data;
-  int chat_x_pos, chat_y_pos;
   int new_chatwidth;
 
   if (!(wbp && wbp->win))
     return;
 
-  if (log_win_on_top)
-    chat_y_pos = Log_Win_Height + 1;
-  else
-    chat_y_pos = 0;
-
-  if (roster_win_on_right)
-    chat_x_pos = 0;
-  else
-    chat_x_pos = Roster_Width;
-
   // Resize/move buddy window
   wresize(wbp->win, dim->l, dim->c);
-  mvwin(wbp->win, chat_y_pos, chat_x_pos);
+  mvwin(wbp->win, Layout.chat.y, Layout.chat.x);
   werase(wbp->win);
   // If a panel exists, replace the old window with the new
   if (wbp->panel)
@@ -1883,16 +1888,13 @@ void scr_resize(void)
   // scr_draw_main_window() will take care of maxY and Log_Win_Height
 
   // Make sure the cursor stays inside the window
-  check_offset(0);
 
   // Resize windows and update panels
   scr_draw_main_window(FALSE);
 
   // Resize all buddy windows
-  dim.l = CHAT_WIN_HEIGHT;
-  dim.c = maxX - Roster_Width;
-  if (dim.c < 1)
-    dim.c = 1;
+  dim.l = MAX(Layout.chat.h, 1);
+  dim.c = MAX(Layout.chat.w, 1);
 
   // Resize all buffers
   g_hash_table_foreach(winbufhash, resize_win_buffer, &dim);
@@ -3595,7 +3597,6 @@ void readline_transpose_chars(void)
     a = get_char(c1);
     b = get_char(c2);
     put_char(put_char(c1, b), a);
-    check_offset(1);
   }
 }
 
@@ -3649,7 +3650,6 @@ void readline_backward_kill_word(void)
   // Modify the line
   ptr_inputline = c;
   _strmove(ptr_inputline, old);
-  check_offset(-1);
 }
 
 //  readline_backward_word()
@@ -3675,7 +3675,6 @@ void readline_backward_word(void)
     } else i++;
   }
 
-  check_offset(-1);
 }
 
 //  readline_forward_word()
@@ -3691,7 +3690,6 @@ void readline_forward_word(void)
     ptr_inputline = next_char(ptr_inputline);
   }
 
-  check_offset(1);
 }
 
 void readline_updowncase_word(int upcase)
@@ -3711,7 +3709,6 @@ void readline_updowncase_word(int upcase)
     ptr_inputline = next_char(ptr_inputline);
   }
 
-  check_offset(1);
 }
 
 void readline_capitalize_word(void)
@@ -3733,7 +3730,6 @@ void readline_capitalize_word(void)
     ptr_inputline = next_char(ptr_inputline);
   }
 
-  check_offset(1);
 }
 
 void readline_backward_char(void)
@@ -3741,7 +3737,6 @@ void readline_backward_char(void)
   if (ptr_inputline == (char*)&inputLine) return;
 
   ptr_inputline = prev_char(ptr_inputline, inputLine);
-  check_offset(-1);
 }
 
 void readline_forward_char(void)
@@ -3749,7 +3744,6 @@ void readline_forward_char(void)
   if (!*ptr_inputline) return;
 
   ptr_inputline = next_char(ptr_inputline);
-  check_offset(1);
 }
 
 //  readline_accept_line(down_history)
@@ -3757,7 +3751,21 @@ void readline_forward_char(void)
 // If down_history is true, load the next history line.
 void readline_accept_line(int down_history)
 {
+  char *end;
+
   scr_check_auto_away(TRUE);
+
+  // Trailing newlines are not part of the message
+  end = inputLine + strlen(inputLine);
+  while (end > inputLine && (end[-1] == '\n' || end[-1] == '\r'))
+    *--end = 0;
+  if (ptr_inputline > end)
+    ptr_inputline = end;
+  if (strchr(inputLine, '\n') && !process_line_allows_newlines(inputLine)) {
+    scr_LogPrint(LPRINT_NORMAL, "This command cannot span several lines.");
+    return;
+  }
+
   last_activity_buddy = current_buddy;
   process_line(inputLine);
   // Add line to history
@@ -3765,7 +3773,6 @@ void readline_accept_line(int down_history)
   // Reset the line
   ptr_inputline = inputLine;
   *ptr_inputline = 0;
-  inputline_offset = 0;
 
   if (down_history) {
     // Use next history line instead of a blank line
@@ -3790,7 +3797,6 @@ void readline_cancel_completion(void)
 {
   scr_cancel_current_completion();
   scr_end_current_completion();
-  check_offset(-1);
 }
 
 void readline_do_completion(gboolean fwd)
@@ -3809,7 +3815,6 @@ void readline_do_completion(gboolean fwd)
     tabstr[i] = '\0';
     scr_insert_text(tabstr);
   }
-  check_offset(0);
 }
 
 void readline_refresh_screen(void)
@@ -3858,10 +3863,8 @@ void readline_hist_prev(void)
   const char *l = scr_cmdhisto_prev(inputLine, 0);
   if (l) {
     strcpy(inputLine, l);
-    // Set the pointer at the EOL.
-    // We have to move it to BOL first, because we could be too far already.
-    readline_iline_start();
-    readline_iline_end();
+    // Set the pointer at the end of the buffer
+    readline_buffer_end();
   }
 }
 
@@ -3870,10 +3873,8 @@ void readline_hist_next(void)
   const char *l = scr_cmdhisto_next(inputLine, 0);
   if (l) {
     strcpy(inputLine, l);
-    // Set the pointer at the EOL.
-    // We have to move it to BOL first, because we could be too far already.
-    readline_iline_start();
-    readline_iline_end();
+    // Set the pointer at the end of the buffer
+    readline_buffer_end();
   }
 }
 
@@ -3888,7 +3889,6 @@ void readline_backward_kill_char(void)
   c = prev_char(ptr_inputline, inputLine);
   ptr_inputline = c;
   _strmove(ptr_inputline, src);
-  check_offset(-1);
 }
 
 void readline_forward_kill_char(void)
@@ -3899,35 +3899,107 @@ void readline_forward_kill_char(void)
   _strmove(ptr_inputline, next_char(ptr_inputline));
 }
 
+//  line_start(p), line_end(p)
+// Beginning/end of the line (in a multi-line input buffer) containing p.
+static char *line_start(char *p)
+{
+  while (p > inputLine && p[-1] != '\n')
+    p--;
+  return p;
+}
+
+static char *line_end(char *p)
+{
+  while (*p && *p != '\n')
+    p++;
+  return p;
+}
+
 void readline_iline_start(void)
 {
-  ptr_inputline = inputLine;
-  inputline_offset = 0;
+  ptr_inputline = line_start(ptr_inputline);
 }
 
 void readline_iline_end(void)
 {
-  for (; *ptr_inputline; ptr_inputline++) ;
-  check_offset(1);
+  ptr_inputline = line_end(ptr_inputline);
 }
 
+void readline_buffer_start(void)
+{
+  ptr_inputline = inputLine;
+}
+
+void readline_buffer_end(void)
+{
+  ptr_inputline = inputLine + strlen(inputLine);
+}
+
+//  readline_backward_kill_iline()
+// Kill from the beginning of the line to the cursor.  At the beginning of
+// a line, join it with the previous one.
 void readline_backward_kill_iline(void)
 {
-  char *dest = inputLine;
+  char *dest = line_start(ptr_inputline);
 
   if (ptr_inputline == inputLine) return;
 
-  if (*dest == COMMAND_CHAR && ptr_inputline != dest+1)
+  if (dest == ptr_inputline) {
+    // Remove the previous newline
+    dest--;
+  } else if (dest == inputLine && *dest == COMMAND_CHAR &&
+             ptr_inputline != dest+1) {
     dest = next_char(dest);
+  }
 
   _strmove(dest, ptr_inputline);
   ptr_inputline = dest;
-  inputline_offset = 0;
 }
 
+//  readline_forward_kill_iline()
+// Kill from the cursor to the end of the line.  At the end of a line, join
+// it with the next one.
 void readline_forward_kill_iline(void)
 {
-  *ptr_inputline = 0;
+  char *end = line_end(ptr_inputline);
+
+  if (end == ptr_inputline && *end == '\n')
+    end++;
+  _strmove(ptr_inputline, end);
+}
+
+//  readline_insert_newline()
+// Insert a line break (multi-line message).
+void readline_insert_newline(void)
+{
+  scr_insert_text("\n");
+}
+
+//  readline_line_up_or_hist(), readline_line_down_or_hist()
+// Move the cursor to the previous/next row of the input line, or in the
+// history when the cursor is on the first/last row.
+void readline_line_up_or_hist(void)
+{
+  il_layout(inputLine, ptr_inputline - inputLine, maxX, &InputLayout);
+  if (InputLayout.cursor_row == 0) {
+    readline_hist_beginning_search_bwd();
+    return;
+  }
+  ptr_inputline = inputLine + il_offset_at(inputLine, &InputLayout,
+                                           InputLayout.cursor_row - 1,
+                                           InputLayout.cursor_col);
+}
+
+void readline_line_down_or_hist(void)
+{
+  il_layout(inputLine, ptr_inputline - inputLine, maxX, &InputLayout);
+  if (InputLayout.cursor_row + 1 >= InputLayout.rows) {
+    readline_hist_beginning_search_fwd();
+    return;
+  }
+  ptr_inputline = inputLine + il_offset_at(inputLine, &InputLayout,
+                                           InputLayout.cursor_row + 1,
+                                           InputLayout.cursor_col);
 }
 
 void readline_send_multiline(void)
@@ -3942,7 +4014,6 @@ void readline_insert(const char *toinsert)
   if (!toinsert || !*toinsert) return;
 
   scr_insert_text(toinsert);
-  check_offset(0);
 }
 
 //  which_row()
@@ -3962,7 +4033,7 @@ static int which_row(const char **p_row)
   if ((ptr_inputline == inputLine) || (inputLine[0] != COMMAND_CHAR)) {
     if (!current_buddy) return -2;
     if (buddy_gettype(BUDDATA(current_buddy)) == ROSTER_TYPE_ROOM) {
-      *p_row = inputLine;
+      *p_row = line_start(ptr_inputline);
       return -1;
     }
     return -2;
@@ -4133,97 +4204,71 @@ static void scr_end_current_completion(void)
   completion_started = FALSE;
 }
 
-//  check_offset(int direction)
-// Check inputline_offset value, and make sure the cursor is inside the
-// screen.
-static inline void check_offset(int direction)
+//  input_max_rows()
+// Maximum height of the input line window.
+static guint input_max_rows(void)
 {
-  int i;
-  char *c = &inputLine[inputline_offset];
-  // Left side
-  if (inputline_offset && direction <= 0) {
-    while (ptr_inputline <= c) {
-      for (i = 0; i < 5; i++)
-        c = prev_char(c, inputLine);
-      if (c == inputLine)
-        break;
-    }
-  }
-  // Right side
-  if (direction >= 0) {
-    int delta = get_char_width(c);
-    while (ptr_inputline > c) {
-      c = next_char(c);
-      delta += get_char_width(c);
-    }
-    c = &inputLine[inputline_offset];
-    while (delta >= maxX) {
-      for (i = 0; i < 5; i++) {
-        delta -= get_char_width(c);
-        c = next_char(c);
-      }
-    }
-  }
-  inputline_offset = c - inputLine;
+  const char *v = settings_opt_get("input_max_rows");
+  int n = v ? atoi(v) : 6;
+  return n > 0 ? n : 1;
 }
 
-#if defined(WITH_ENCHANT) || defined(WITH_ASPELL)
-// prints inputLine with underlined words when misspelled
-static inline void print_checked_line(void)
+//  refresh_inputline()
+// Draw the input line.  The window grows (up to input_max_rows lines)
+// when the text needs more rows.
+static void refresh_inputline(void)
 {
-  char *wprint_char_fmt = "%c";
-  int point;
-  int nrchar = maxX;
-  char *ptrCur = inputLine + inputline_offset;
+  guint r, visible, height;
+  gboolean spell = FALSE;
+  int width = getmaxx(inputWnd);
 
-#ifdef UNICODE
-  // We need this to display a single UTF-8 char... Any better solution?
-  if (utf8_mode)
-    wprint_char_fmt = "%lc";
-#endif
+  il_layout(inputLine, ptr_inputline - inputLine, maxX, &InputLayout);
 
-  wmove(inputWnd, 0, 0); // problem with backspace
-
-  while (*ptrCur && nrchar-- > 0) {
-    point = ptrCur - inputLine;
-    if (maskLine[point])
-      wattrset(inputWnd, A_UNDERLINE);
-    wprintw(inputWnd, wprint_char_fmt, get_char(ptrCur));
-    wattrset(inputWnd, A_NORMAL);
-    ptrCur = next_char(ptrCur);
+  height = MIN(InputLayout.rows, input_max_rows());
+  if (height != (guint)Input_Win_Height) {
+    Input_Win_Height = height;
+    scr_resize();
+    width = getmaxx(inputWnd);
   }
-}
-#endif
+  visible = Layout.input.h;
 
-static inline void refresh_inputline(void)
-{
+  // Keep the cursor visible
+  if (InputLayout.cursor_row < input_scroll)
+    input_scroll = InputLayout.cursor_row;
+  else if (InputLayout.cursor_row >= input_scroll + visible)
+    input_scroll = InputLayout.cursor_row - visible + 1;
+  if (input_scroll + visible > InputLayout.rows)
+    input_scroll = InputLayout.rows > visible ? InputLayout.rows - visible : 0;
+
 #if defined(WITH_ENCHANT) || defined(WITH_ASPELL)
   if (settings_opt_get_int("spell_enable") && (chatmode || !vi_mode)) {
     memset(maskLine, 0, INPUTLINE_LENGTH+1);
     spellcheck(inputLine, maskLine);
-  }
-  print_checked_line();
-  wclrtoeol(inputWnd);
-  if (*ptr_inputline) {
-    // hack to set cursor pos. Characters can have different width,
-    // so I know of no better way.
-    char c = *ptr_inputline;
-    *ptr_inputline = 0;
-    print_checked_line();
-    *ptr_inputline = c;
-  }
-#else
-  mvwprintw(inputWnd, 0, 0, "%s", inputLine + inputline_offset);
-  wclrtoeol(inputWnd);
-  if (*ptr_inputline) {
-    // hack to set cursor pos. Characters can have different width,
-    // so I know of no better way.
-    char c = *ptr_inputline;
-    *ptr_inputline = 0;
-    mvwprintw(inputWnd, 0, 0, "%s", inputLine + inputline_offset);
-    *ptr_inputline = c;
+    spell = TRUE;
   }
 #endif
+
+  werase(inputWnd);
+  for (r = 0; r < visible && input_scroll + r < InputLayout.rows; r++) {
+    char *p = inputLine + il_row_start(&InputLayout, input_scroll + r);
+    char *end = inputLine + il_row_end(&InputLayout, input_scroll + r);
+
+    wmove(inputWnd, r, 0);
+    while (p < end) {
+      char *next = next_char(p);
+      if (spell && maskLine[p - inputLine])
+        wattrset(inputWnd, A_UNDERLINE);
+      if ((unsigned char)*p < ' ')
+        waddch(inputWnd, '?' | A_REVERSE);  // Control character
+      else
+        waddnstr(inputWnd, p, next - p);
+      if (spell)
+        wattrset(inputWnd, A_NORMAL);
+      p = next;
+    }
+  }
+  wmove(inputWnd, InputLayout.cursor_row - input_scroll,
+        MIN((int)InputLayout.cursor_col, width - 1));
 }
 
 void scr_handle_CtrlC(void)
@@ -4234,7 +4279,6 @@ void scr_handle_CtrlC(void)
   // Same as Ctrl-g, now
   scr_cancel_current_completion();
   scr_end_current_completion();
-  check_offset(-1);
   refresh_inputline();
 }
 
@@ -4574,6 +4618,263 @@ static void scr_process_vi_arrow_key(int key)
     process_command(mkcmdstr("roster down"), TRUE);
 }
 
+
+/* -- Pasted text -- */
+
+// Maximum size of pasted text we accept
+#define PASTE_MAX_SIZE  (256*1024)
+
+static struct {
+  gboolean active;      // Collecting pasted text
+  gboolean bracketed;   // ... between \e[200~ and \e[201~
+  GString *buf;
+  gint64 last_key;      // Time of the last pasted key (monotonic, us)
+  guint timer;
+  gchar *pending;       // Text waiting for a confirmation ("confirm" mode)
+} paste;
+
+static void paste_commit(void);
+
+static guint paste_option_int(const char *name, guint def)
+{
+  const char *v = settings_opt_get(name);
+  return v ? (guint)MAX(atoi(v), 0) : def;
+}
+
+//  paste_timer_cb()
+// End of a detected paste (no more input), or bracketed paste without end.
+static gboolean paste_timer_cb(gpointer data)
+{
+  gint64 quiet = paste.bracketed ? 500000 :
+                 (gint64)paste_option_int("paste_timeout_ms", 30) * 1000;
+
+  if (!paste.active) {
+    paste.timer = 0;
+    return FALSE;
+  }
+  if (g_get_monotonic_time() - paste.last_key < quiet)
+    return TRUE;    // Wait more
+  paste.timer = 0;
+  paste_commit();
+  scr_do_update();
+  return FALSE;
+}
+
+static void paste_start(gboolean bracketed)
+{
+  if (!paste.buf)
+    paste.buf = g_string_new(NULL);
+  g_string_truncate(paste.buf, 0);
+  paste.active = TRUE;
+  paste.bracketed = bracketed;
+  paste.last_key = g_get_monotonic_time();
+  if (!paste.timer)
+    paste.timer = g_timeout_add(bracketed ? 250 : 10, paste_timer_cb, NULL);
+}
+
+//  paste_add_key(kcode)
+// Add the key to the pasted text.
+static void paste_add_key(const keycode_t *k)
+{
+  paste.last_key = g_get_monotonic_time();
+  if (paste.buf->len >= PASTE_MAX_SIZE)
+    return;
+  if (k->mcode == MKEY_META) {
+    // An Escape character in the text: keep the next character only
+  } else if (k->mcode != MKEY_NONE) {
+    return;   // Escape sequences are dropped
+  }
+  if (k->utf8)
+    g_string_append_unichar(paste.buf, k->value);
+  else if (k->value == 13)
+    g_string_append_c(paste.buf, '\r');
+  else if (k->value == 10 || k->value == 9 ||
+           (k->value >= ' ' && k->value < 256 && k->value != 127))
+    g_string_append_c(paste.buf, k->value);
+}
+
+//  paste_send_lines(text)
+// Old behaviour: each line is sent (or run) like a typed line.
+static void paste_send_lines(const char *text)
+{
+  gchar **lines = g_strsplit(text, "\n", -1);
+  gchar **l;
+
+  for (l = lines; *l; l++) {
+    scr_insert_text(*l);
+    if (*(l+1))
+      readline_accept_line(FALSE);
+  }
+  g_strfreev(lines);
+}
+
+static void paste_insert(const char *text)
+{
+  if (strlen(inputLine) + strlen(text) >= INPUTLINE_LENGTH) {
+    scr_LogPrint(LPRINT_NORMAL, "Pasted text is too long (%u bytes), "
+                 "it has not been inserted.", (unsigned)strlen(text));
+    return;
+  }
+  scr_insert_text(text);
+}
+
+//  paste_commit()
+// End of the pasted text: insert it according to "paste_mode".
+static void paste_commit(void)
+{
+  gchar *text;
+  const char *mode;
+
+  if (!paste.active)
+    return;
+  paste.active = FALSE;
+  if (paste.timer) {
+    g_source_remove(paste.timer);
+    paste.timer = 0;
+  }
+
+  text = paste_normalize(paste.buf->str);
+  g_string_truncate(paste.buf, 0);
+  if (!*text) {
+    g_free(text);
+    return;
+  }
+
+  if (vi_mode && !chatmode && inputLine[0] != COMMAND_CHAR &&
+      inputLine[0] != VI_SEARCH_COMMAND_CHAR) {
+    // Don't run the text as vi commands
+    scr_LogPrint(LPRINT_NORMAL, "Enter chat mode to paste text.");
+    g_free(text);
+    return;
+  }
+
+  mode = settings_opt_get("paste_mode");
+  if (!strchr(text, '\n') || !mode || !strcmp(mode, "insert")) {
+    paste_insert(text);
+  } else if (!strcmp(mode, "send_lines")) {
+    paste_send_lines(text);
+  } else {  // "confirm"
+    if (!strcmp(mode, "confirm")) {
+      scr_LogPrint(LPRINT_NORMAL, "Pasted %u lines (%u bytes): "
+                   "Enter = insert, s = send line by line, Esc = cancel",
+                   paste_count_lines(text), (unsigned)strlen(text));
+      g_free(paste.pending);
+      paste.pending = text;
+      text = NULL;
+    } else {
+      scr_LogPrint(LPRINT_NORMAL, "Invalid paste_mode value: %s", mode);
+      paste_insert(text);
+    }
+  }
+  g_free(text);
+  refresh_inputline();
+}
+
+//  paste_confirm_key(kcode)
+// Answer to the "confirm" question.
+static void paste_confirm_key(const keycode_t *k)
+{
+  gchar *text = paste.pending;
+
+  paste.pending = NULL;
+  if (k->mcode == MKEY_NONE && (k->value == 13 || k->value == 'i' ||
+                                k->value == 'y')) {
+    paste_insert(text);
+  } else if (k->mcode == MKEY_NONE && k->value == 's') {
+    paste_send_lines(text);
+  } else {
+    scr_LogPrint(LPRINT_NORMAL, "Pasted text discarded.");
+  }
+  g_free(text);
+  refresh_inputline();
+}
+
+//  paste_key(kcode)
+// Handle bracketed paste.  Returns TRUE if the key has been consumed.
+static gboolean paste_key(const keycode_t *k)
+{
+  gboolean special = (k->mcode == MKEY_SPEC && !k->spec.mods);
+
+  if (special && k->spec.key == KN_PASTE_START) {
+    if (!paste.active)
+      paste_start(TRUE);
+    return TRUE;
+  }
+  if (special && k->spec.key == KN_PASTE_END) {
+    paste_commit();
+    return TRUE;
+  }
+  if (paste.active) {
+    paste_add_key(k);
+    return TRUE;
+  }
+  if (paste.pending) {
+    paste_confirm_key(k);
+    return TRUE;
+  }
+  return FALSE;
+}
+
+//  burst_is_paste(keys, n)
+// Without bracketed paste, a paste is detected when many keys, including
+// Enter, are read at once: nobody types that fast.
+static gboolean burst_is_paste(const keycode_t *keys, guint n)
+{
+  guint i;
+  const char *opt = settings_opt_get("paste_detect");
+
+  if (opt && !atoi(opt))
+    return FALSE;
+  if (n < paste_option_int("paste_burst_min", 8))
+    return FALSE;
+  for (i = 0; i < n; i++) {
+    if (keys[i].mcode == MKEY_SPEC && keys[i].spec.key == KN_PASTE_START)
+      return FALSE;   // Bracketed paste
+    if (keys[i].mcode == MKEY_NONE && !keys[i].utf8 &&
+        (keys[i].value == 13 || keys[i].value == 10))
+      return TRUE;
+  }
+  return FALSE;
+}
+
+//  scr_process_input()
+// Read and process all the pending keys.
+void scr_process_input(void)
+{
+  static GArray *burst;
+  keycode_t kcode;
+  guint i;
+
+  if (!burst)
+    burst = g_array_new(FALSE, FALSE, sizeof(keycode_t));
+  g_array_set_size(burst, 0);
+
+  for (scr_getch(&kcode); kcode.value != ERR; scr_getch(&kcode)) {
+    g_array_append_val(burst, kcode);
+    if (burst->len >= 65536)
+      break;
+  }
+  if (!burst->len)
+    return;
+
+  // A detected paste goes on as long as keys keep coming quickly
+  if (paste.active && !paste.bracketed) {
+    for (i = 0; i < burst->len; i++)
+      paste_add_key(&g_array_index(burst, keycode_t, i));
+    return;
+  }
+  if (!paste.active && !paste.pending &&
+      burst_is_paste((keycode_t *)burst->data, burst->len)) {
+    paste_start(FALSE);
+    for (i = 0; i < burst->len; i++)
+      paste_add_key(&g_array_index(burst, keycode_t, i));
+    return;
+  }
+
+  for (i = 0; i < burst->len; i++)
+    scr_process_key(g_array_index(burst, keycode_t, i));
+}
+
 //  scr_process_key(key)
 // Handle the pressed key, in the command line (bottom).
 void scr_process_key(keycode_t kcode)
@@ -4582,6 +4883,9 @@ void scr_process_key(keycode_t kcode)
   int display_char = FALSE;
   int vi_search = FALSE;
   static int ex_or_search_mode = FALSE;
+
+  if (paste_key(&kcode))
+    return;
 
   lock_chatstate = FALSE;
 
@@ -4906,7 +5210,6 @@ display:
       strcpy(tmpLine, ptr_inputline);
       ptr_inputline = put_char(ptr_inputline, key);
       strcpy(ptr_inputline, tmpLine);
-      check_offset(1);
     } else {
       // Look for a key binding.
       if (!kcode.utf8)
@@ -5113,7 +5416,6 @@ static void clear_inputline(void)
 {
   ptr_inputline = inputLine;
   *ptr_inputline = 0;
-  inputline_offset = 0;
 }
 
 /* vim: set et cindent cinoptions=>2\:2(0 ts=2 sw=2:  For Vim users... */

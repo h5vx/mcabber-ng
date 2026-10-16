@@ -29,7 +29,8 @@ void spellcheck_deinit(void);
 #include <mcabber/logprint.h>
 #include <mcabber/roster.h>
 
-#define INPUTLINE_LENGTH  1024
+// Maximum size of the input line, in bytes (it can have several lines)
+#define INPUTLINE_LENGTH  8191
 
 // Only used in screen.c; this is the maximum line number
 // in a multi-line message.  Should be < 1000
@@ -93,6 +94,7 @@ void scr_write_outgoing_message(const char *jidto,   const char *text,
 
 void scr_getch(keycode_t *kcode);
 void scr_process_key(keycode_t kcode);
+void scr_process_input(void);
 
 void scr_init_bindings(void);
 gboolean scr_bind_key(const char *name, const char *command, GError **err);
@@ -189,6 +191,11 @@ void readline_backward_kill_char(void);
 void readline_forward_kill_char(void);
 void readline_iline_start(void);
 void readline_iline_end(void);
+void readline_buffer_start(void);
+void readline_buffer_end(void);
+void readline_insert_newline(void);
+void readline_line_up_or_hist(void);
+void readline_line_down_or_hist(void);
 void readline_backward_kill_iline(void);
 void readline_forward_kill_iline(void);
 void readline_send_multiline(void);

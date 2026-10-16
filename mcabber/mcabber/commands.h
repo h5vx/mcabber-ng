@@ -17,6 +17,7 @@ typedef struct {
 void cmd_init(void);
 cmd *cmd_get(const char *command);
 void process_line(const char *line);
+gboolean process_line_allows_newlines(const char *line);
 void process_command(const char *line, guint iscmd);
 char *expandalias(const char *line);
 #ifdef MODULES_ENABLE

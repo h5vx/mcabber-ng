@@ -410,18 +410,11 @@ static gboolean mcabber_source_check(GSource *source)
 
 static gboolean keyboard_activity(void)
 {
-  keycode_t kcode;
-
   if (terminate_ui) {
     return FALSE;
   }
   scr_do_update();
-  scr_getch(&kcode);
-
-  while (kcode.value != ERR) {
-    scr_process_key(kcode);
-    scr_getch(&kcode);
-  }
+  scr_process_input();
   scr_check_auto_away(FALSE);
 
   return TRUE;
