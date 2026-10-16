@@ -230,7 +230,7 @@ void cmd_init(void)
   cmd_add("screen_refresh", "Redraw mcabber screen", 0, 0, &do_screen_refresh,
           NULL);
   cmd_add("set", "Set/query an option value", 0, 0, &do_set, NULL);
-  cmd_add("source", "Read a configuration file", 0, 0, &do_source, NULL);
+  cmd_add("source", "Run a Lua file", 0, 0, &do_source, NULL);
   cmd_add("status", "Show or set your status", COMPL_STATUS, 0, &do_status,
           NULL);
   cmd_add("status_to", "Show or set your status for one recipient",
@@ -2436,6 +2436,11 @@ static void collect_bind(char *k, char *v, void *param)
   g_ptr_array_add((GPtrArray *)param, k);
 }
 
+static void collect_lua_bind(const char *k, void *param)
+{
+  g_ptr_array_add((GPtrArray *)param, (char *)k);
+}
+
 static gint cmp_str(gconstpointer a, gconstpointer b)
 {
   return g_utf8_collate(*(const char **)a, *(const char **)b);
@@ -2447,11 +2452,13 @@ static void dump_bindings(void)
   guint i;
 
   settings_foreach(SETTINGS_TYPE_BINDING, &collect_bind, keys);
+  mlua_foreach_binding(&collect_lua_bind, keys);
   g_ptr_array_sort(keys, cmp_str);
   for (i = 0; i < keys->len; i++) {
     const char *k = g_ptr_array_index(keys, i);
+    const char *cmd = settings_get(SETTINGS_TYPE_BINDING, k);
     scr_LogPrint(LPRINT_NORMAL, "Key %-12s is bound to: %s", k,
-                 settings_get(SETTINGS_TYPE_BINDING, k));
+                 cmd ? cmd : "(Lua function)");
   }
   g_ptr_array_free(keys, TRUE);
 }
@@ -2509,6 +2516,8 @@ static void do_bind(char *arg)
       scr_LogPrint(LPRINT_NORMAL, "Invalid key: %s", err->message);
     } else {
       const char *val = settings_get(SETTINGS_TYPE_BINDING, canon);
+      if (!val && mlua_has_binding(canon))
+        val = "(Lua function)";
       if (val)
         scr_LogPrint(LPRINT_NORMAL, "Key %s is bound to: %s", canon, val);
       else
@@ -4225,7 +4234,8 @@ static void do_source(char *arg)
     // source files in list
     for (i=0; i < flist.gl_pathc; ++i) {
       recur_level++;
-      cfg_read_file(flist.gl_pathv[i], FALSE);
+      scr_LogPrint(LPRINT_LOGNORM, "Reading %s", flist.gl_pathv[i]);
+      mlua_dofile(flist.gl_pathv[i]);
       recur_level--;
     }
     // free

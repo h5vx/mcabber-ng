@@ -9,13 +9,15 @@ mcabber - a simple Jabber (XMPP) console client
 
 SYNOPSIS
 --------
-'mcabber' [ -h | -V | -f configfile ]
+'mcabber-ng' [ -h | -V | -n ] [ -f configfile ]
 
 DESCRIPTION
 -----------
-`mcabber(1)` is a small Jabber (XMPP) console client. +
+`mcabber-ng` is a small Jabber (XMPP) console client, based on `mcabber`. +
 For now it needs a configuration file to start, so please copy the sample
-mcabberrc file and adapt your connection settings.
+init.lua file to $XDG_CONFIG_HOME/mcabber-ng/init.lua (usually
+~/.config/mcabber-ng/init.lua) and adapt your connection settings.  The
+configuration file is a Lua script, see the CONFIGURATION FILE section.
 
 You also need to have an existing Jabber account to use this software, as
 it cannot (un)register accounts yet.
@@ -48,7 +50,13 @@ OPTIONS
         Displays `mcabber` version and compile-time definitions.
 
 -f configfile::
-        Use configuration file 'configfile'
+        Use configuration file 'configfile'.  The directory of this file is
+        used as the configuration directory.
+
+-n::
+        Load the configuration file, print the resulting options, aliases and
+        key bindings, and exit.  The exit status is not zero if the
+        configuration file cannot be loaded.
 
 WINDOWS/PANES
 -------------
@@ -243,16 +251,15 @@ COMMANDS RELATED TO MCABBER
         'request';;  Request a subscription to the buddy's presence updates
         'request_unsubscribe';;  Request unsubscription from the buddy's presence updates
 
-/bind [keycode [= command line]]::
-        Bind the command to the key given as "keycode".  To examine which keys are currently not used look at `mcabber` log window and press examined key.  For example: "Unknown key=265" means that you can bind some command to key #265.
+/bind [key [= command line]]::
+        Bind the command line to a key combination.  Keys are given by name, like "Alt+j", "Ctrl+Left", "F5" or "Ctrl+Shift+PgUp" (see KEY NAMES below).  To find the name of a key, press it: unbound keys are reported in the log window, for example "Unknown key: Alt+j".
 
         (without arguments);;  Display list of current bindings
-        'keycode';;  Display the command line bound to this key
-        'keycode'=;;  Unbind key with code "keycode"
-        'keycode' = command line;;  Bind "command line" to the key with code "keycode"
+        'key';;  Display the command line bound to this key
+        'key' =;;  Remove the binding of "key"
+        'key' = command line;;  Bind "command line" to the key
 
-        Example: "/bind 265 = status away" (265 is F1). +
-        Note: keycodes can be different depending on your ncurses configuration. +
+        Example: "/bind F5 = roster toggle_offline" +
         Tip: aliases also can be used instead of commands.
 
 /buffer clear|close|close_all|purge|list::
@@ -391,7 +398,7 @@ COMMANDS RELATED TO MCABBER
         In multi-line mode, each line (except command lines) typed in the input line will be added to the multi-line message.  Once the message is finished, it can be sent to the current selected buddy with the "/msay send" command. +
         The 'begin' subcommand enables multi-line mode.  Note that it allows a message subject to be specified. +
         The 'verbatim' multi-line mode disables commands, so that it is possible to enter lines starting with a slash.  Only the "/msay" command (with send or abort parameters) can be used to exit verbatim mode. +
-        The 'toggle' subcommand can be bound to a key to use the multi-line mode quickly (for example, "bind M13 = msay toggle" to switch using the Meta-Enter combination).
+        The 'toggle' subcommand can be bound to a key to use the multi-line mode quickly (for example, "bind Alt+Enter = msay toggle").
 
         'begin' [subject];;  Enter multi-line mode
         'verbatim';;  Enter verbatim multi-line mode
@@ -535,7 +542,7 @@ COMMANDS RELATED TO MCABBER
         Without arguments prints a list of all set options with their values
 
 /source pattern::
-        Read configuration files, that match glob pattern (sorted in alphabetical order).
+        Run the Lua files that match the glob pattern (sorted in alphabetical order).
 
 /status [online|avail|free|dnd|notavail|away [-|statusmessage]]::
 /status message -|statusmessage::
@@ -558,18 +565,81 @@ COMMANDS RELATED TO MCABBER
 
 CONFIGURATION FILE
 ------------------
-See the provided sample configuration file, which should be self-documenting.
+The configuration file, $XDG_CONFIG_HOME/mcabber-ng/init.lua by default, is a
+Lua script (Lua 5.1 / LuaJIT).  The provided sample configuration file
+(init.lua.example) documents all the options.  The `mc` table (also available
+with require "mcabber") gives access to mcabber-ng:
+
+mc.set { name = value, ... }, mc.set(name, value)::
+        Set options.  Values can be strings, numbers or booleans (true is 1,
+        false is 0); nil removes the option.  mc.opt.name = value is
+        equivalent, and mc.opt.name or mc.get(name) read an option (as a
+        string).
+
+mc.alias { name = "command line", ... }, mc.alias(name, command)::
+        Define command aliases.
+
+mc.bind { [key] = command, ... }, mc.bind(key, command)::
+        Bind keys (see KEY NAMES) to command lines or to Lua functions.  A
+        function receives a table with the key name ('key' field).
+        mc.unbind(key) removes a binding, mc.bindings() returns all of them,
+        mc.key_name(name) returns the canonical name of a key.
+
+mc.command(command line)::
+        Run a mcabber command (the leading slash is optional).  While the
+        configuration file is loaded, only "safe" commands can be used (set,
+        bind, alias, pgp, source, status, color, otrpolicy, module).
+
+mc.color.roster(statuses, jid, color), mc.color.muc(room, mode), mc.color.mucnick(nick, color)::
+        Coloring rules, see the /color command.
+
+mc.module.load(name), mc.module.unload(name)::
+        Load or unload a module.
+
+mc.status(status [, message])::
+        Set your status.
+
+mc.timer(milliseconds, function [, repeat])::
+        Call the function after the delay (repeatedly if 'repeat' is true,
+        until the function returns false).  Returns an id for mc.cancel(id).
+
+mc.print(...), mc.log(...), mc.debug(...)::
+        Print to the log window (mc.log also writes to the trace log file,
+        mc.debug only when debugging is enabled).
+
+mc.version, mc.config_dir, mc.config_file::
+        The mcabber-ng version, configuration directory and file.
+
+Other Lua files can be loaded with require(): <config dir>/lua/ is in the
+module search path.  The '/lua' command runs Lua code at runtime ("/lua 1+1"
+prints 2) and '/source' runs a Lua file.
+
+KEY NAMES
+---------
+A key combination is written "Modifier+...+Key".  Modifiers are 'Ctrl' (or
+'C'), 'Alt' (or 'Meta', 'M') and 'Shift' (or 'S'); '-' can be used instead of
+'+'.  Names are not case-sensitive, except single characters.
+
+Named keys are: Enter, Tab, Backspace, Esc, Space, Up, Down, Left, Right,
+Home, End, PgUp, PgDn, Ins, Del, Begin, F1 to F63, WheelUp, WheelDown.  Any
+other key is a single character, like "Alt+j", "Alt+ж", "Ctrl+=" or "Alt+-"
+("Alt+Plus" for the plus sign).
+
+Some combinations cannot be told apart by terminals: Ctrl+i is Tab, Ctrl+m
+is Enter, Ctrl+[ is Esc, and Shift with a letter is the uppercase letter
+("Alt+Shift+j" is "Alt+J").  Combinations like Ctrl+Enter or Shift+Enter
+are only available with terminals that report them (CSI u / modifyOtherKeys).
 
 FILES
 -----
 The following files can be used by `mcabber(1)`:
 
-    $HOME/.mcabber/mcabberrc    Default configuration file
-    $HOME/.config/mcabber/mcabberrc Alternate location (can use XDG_CONFIG_HOME)
-    $HOME/.mcabberrc            Configuration file used if no other has been found
-    $HOME/.mcabber/histo/       Default directory for storing chat history files, if enabled
-    /usr/share/mcabber/help/    Default directory for online help files
-    /usr/lib/mcabber/           Default directory for modules
+    $HOME/.config/mcabber-ng/init.lua   Default configuration file (uses XDG_CONFIG_HOME)
+    $HOME/.config/mcabber-ng/lua/       Lua modules directory (for require)
+    $HOME/.config/mcabber-ng/histo/     Default directory for storing chat history files, if enabled
+    /usr/share/mcabber-ng/help/         Default directory for online help files
+    /usr/share/mcabber-ng/init.lua.example  Sample configuration file
+    /usr/lib/mcabber-ng/                Default directory for modules
 
 BUGS
 ----

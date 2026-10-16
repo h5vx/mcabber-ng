@@ -15,10 +15,12 @@
  * along with this program; if not, see <http://www.gnu.org/licenses/>.
  */
 
+#include <stdio.h>
 #include <string.h>
 
 #include "mlua.h"
 #include "mlua_compat.h"
+#include "mlua_prelude.h"
 #include "settings.h"
 #include "logprint.h"
 #include "utils.h"
@@ -27,13 +29,24 @@
 // message, which runs handlers again...)
 #define MLUA_MAX_DEPTH  8
 
+// Registry key of the table of Lua functions bound to keys
+#define BINDINGS_KEY    "mcabber.bindings"
+
+gboolean mlua_startup;
+
 static lua_State *L;
 static int depth;
 static gboolean reporting;
+static gchar *config_file;
 
 lua_State *mlua_state(void)
 {
   return L;
+}
+
+const char *mlua_config_file(void)
+{
+  return config_file;
 }
 
 //  mlua_report_error(context, message)
@@ -78,14 +91,16 @@ static int traceback_handler(lua_State *L)
   return 1;
 }
 
-int mlua_pcall(lua_State *L, int nargs, int nresults, const char *ctx)
+//  pcall_traceback(L, nargs, nresults)
+// lua_pcall() with a traceback; the error message is left on the stack.
+static int pcall_traceback(lua_State *L, int nargs, int nresults)
 {
   int base, ret;
 
   if (depth >= MLUA_MAX_DEPTH) {
     lua_pop(L, nargs + 1);
-    mlua_report_error(ctx, "Lua calls nested too deeply");
-    return -1;
+    lua_pushstring(L, "Lua calls nested too deeply");
+    return LUA_ERRRUN;
   }
 
   base = lua_gettop(L) - nargs;   // Function index
@@ -95,6 +110,12 @@ int mlua_pcall(lua_State *L, int nargs, int nresults, const char *ctx)
   ret = lua_pcall(L, nargs, nresults, base);
   depth--;
   lua_remove(L, base);
+  return ret;
+}
+
+int mlua_pcall(lua_State *L, int nargs, int nresults, const char *ctx)
+{
+  int ret = pcall_traceback(L, nargs, nresults);
   if (ret) {
     mlua_report_error(ctx, lua_tostring(L, -1));
     lua_pop(L, 1);
@@ -151,6 +172,16 @@ static void set_package_path(void)
   g_string_free(path, TRUE);
 }
 
+//  set_mc_field(name, value)
+// mc[name] = value (string)
+static void set_mc_field(const char *name, const char *value)
+{
+  lua_getfield(L, LUA_GLOBALSINDEX, "mc");
+  lua_pushstring(L, value);
+  lua_setfield(L, -2, name);
+  lua_pop(L, 1);
+}
+
 void mlua_init(void)
 {
   if (L)
@@ -163,6 +194,9 @@ void mlua_init(void)
   }
   luaL_openlibs(L);
 
+  lua_newtable(L);
+  lua_setfield(L, LUA_REGISTRYINDEX, BINDINGS_KEY);
+
   // mc = {...}; package.loaded.mcabber = mc
   lua_newtable(L);
   mlua_api_register(L);
@@ -172,17 +206,154 @@ void mlua_init(void)
   lua_getfield(L, -1, "loaded");
   lua_pushvalue(L, -3);
   lua_setfield(L, -2, "mcabber");
-  lua_pop(L, 3);
+  lua_pop(L, 2);
 
-  set_package_path();
+  // The prelude gets the mc table as argument
+  if (luaL_loadbuffer(L, mlua_prelude, strlen(mlua_prelude), "=prelude")) {
+    mlua_report_error("prelude", lua_tostring(L, -1));
+    lua_pop(L, 2);
+  } else {
+    lua_insert(L, -2);
+    mlua_pcall(L, 1, 0, "prelude");
+  }
 }
 
 void mlua_deinit(void)
 {
   if (!L)
     return;
+  mlua_api_deinit(L);
   lua_close(L);
   L = NULL;
+}
+
+int mlua_load_config(const char *filename)
+{
+  gchar *path;
+  int ret;
+
+  if (!L)
+    return -2;
+
+  if (filename) {
+    gchar *dir;
+    path = expand_filename(filename);
+    if (!g_file_test(path, G_FILE_TEST_IS_REGULAR)) {
+      fprintf(stderr, "Cannot open configuration file %s\n", path);
+      g_free(path);
+      return -2;
+    }
+    // The configuration directory is the one of the file
+    dir = g_path_get_dirname(path);
+    settings_set_mcabber_config_dir(dir);
+    g_free(dir);
+  } else {
+    const char *cfgdir = settings_get_mcabber_config_dir();
+    if (!cfgdir)
+      return -1;
+    path = g_strdup_printf("%s/init.lua", cfgdir);
+    if (!g_file_test(path, G_FILE_TEST_EXISTS)) {
+      scr_log_print(LPRINT_NORMAL, "No configuration file (%s)", path);
+      g_free(path);
+      set_package_path();
+      return -1;
+    }
+    // Check mcabber directory permissions.
+    // Here we just warn, we don't change the mode.
+    checkset_perm(cfgdir, FALSE);
+  }
+  // As the file could contain sensitive data, we make it user-readable only.
+  checkset_perm(path, TRUE);
+
+  g_free(config_file);
+  config_file = path;
+  set_package_path();
+  set_mc_field("config_dir", settings_get_mcabber_config_dir());
+  set_mc_field("config_file", config_file);
+
+  scr_log_print(LPRINT_LOGNORM, "Reading %s", path);
+
+  mlua_startup = TRUE;
+  ret = luaL_loadfile(L, path);
+  if (!ret)
+    ret = pcall_traceback(L, 0, 0);
+  mlua_startup = FALSE;
+
+  if (ret) {
+    fprintf(stderr, "Error in the configuration file:\n%s\n",
+            lua_tostring(L, -1));
+    lua_pop(L, 1);
+    return -2;
+  }
+  return 0;
+}
+
+//  push_bindings()
+// Push the table of Lua functions bound to keys.
+static void push_bindings(void)
+{
+  lua_getfield(L, LUA_REGISTRYINDEX, BINDINGS_KEY);
+}
+
+gboolean mlua_has_binding(const char *keyname)
+{
+  gboolean found;
+  if (!L)
+    return FALSE;
+  push_bindings();
+  lua_getfield(L, -1, keyname);
+  found = !lua_isnil(L, -1);
+  lua_pop(L, 2);
+  return found;
+}
+
+//  mlua_call_binding(keyname)
+// Call the Lua function bound to the key.  Returns FALSE if there is none.
+gboolean mlua_call_binding(const char *keyname)
+{
+  gchar *ctx;
+
+  if (!L)
+    return FALSE;
+  push_bindings();
+  lua_getfield(L, -1, keyname);
+  lua_remove(L, -2);
+  if (lua_isnil(L, -1)) {
+    lua_pop(L, 1);
+    return FALSE;
+  }
+  // fn({ key = keyname })
+  lua_newtable(L);
+  lua_pushstring(L, keyname);
+  lua_setfield(L, -2, "key");
+  ctx = g_strdup_printf("key %s", keyname);
+  mlua_pcall(L, 1, 0, ctx);
+  g_free(ctx);
+  return TRUE;
+}
+
+void mlua_unbind(const char *keyname)
+{
+  if (!L)
+    return;
+  push_bindings();
+  lua_pushnil(L);
+  lua_setfield(L, -2, keyname);
+  lua_pop(L, 1);
+}
+
+void mlua_foreach_binding(void (*cb)(const char *key, void *data), void *data)
+{
+  if (!L)
+    return;
+  push_bindings();
+  lua_pushnil(L);
+  while (lua_next(L, -2)) {
+    lua_pop(L, 1);
+    if (lua_type(L, -1) == LUA_TSTRING)
+      cb(lua_tostring(L, -1), data);
+  }
+  lua_pop(L, 1);
 }
 
 //  mlua_cmd_lua(code)

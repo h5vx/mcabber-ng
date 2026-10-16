@@ -209,7 +209,8 @@ static char *otr_get_dir(void)
     }
     return xp_conf_dir;
   } else {
-    return expand_filename("~/.mcabber/otr/");
+    const char *cfgdir = settings_get_mcabber_config_dir();
+    return g_strdup_printf("%s/otr/", cfgdir ? cfgdir : ".");
   }
 }
 

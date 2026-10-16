@@ -31,10 +31,6 @@
 #include "xmpp.h"
 #include "main.h"
 
-// Maximum line length
-// (probably best to use the same value as INPUTLINE_LENGTH)
-#define CONFLINE_LENGTH  1024
-
 static GHashTable *option;
 static GHashTable *alias;
 static GHashTable *binding;
@@ -107,208 +103,41 @@ void settings_free(void)
 #endif
 }
 
+static gchar *config_dir;
+
+//  settings_set_mcabber_config_dir(dir)
+// Override the configuration directory (used when the configuration file
+// is given on the command line).
+void settings_set_mcabber_config_dir(const gchar *dir)
+{
+  g_free(config_dir);
+  config_dir = g_strdup(dir);
+}
+
 //  settings_get_mcabber_config_dir()
-// Returns the mcabber configuration directory.
-// The directory is looked up for only once (and the string is never freed,
-// but we might change this later).
+// Returns the mcabber-ng configuration directory:
+// $XDG_CONFIG_HOME/mcabber-ng (~/.config/mcabber-ng by default).
+// The directory doesn't need to exist.
 const gchar *settings_get_mcabber_config_dir(void)
 {
-  static char *config_dir;
-  const char *home_dir;
-  GString *sfilename;
-  FILE *fp;
+  const char *xdg;
 
   if (config_dir)
     return config_dir;
 
-  home_dir = getenv("HOME");
-  if (!home_dir) {
-    scr_log_print(LPRINT_LOG, "Can't find home dir!");
-    fprintf(stderr, "Can't find home dir!\n");
-    return NULL;
-  }
-
-  sfilename = g_string_new("");
-
-  // First try: $HOME/.mcabber/mcabberrc
-  g_string_printf(sfilename, "%s/.mcabber/mcabberrc", home_dir);
-  if ((fp = fopen(sfilename->str, "r")) != NULL) {
-    fclose(fp);
-    config_dir = g_strdup_printf("%s/.mcabber", home_dir);
-  }
-
-  // Second guess: Try to use the XDG standard configuration directory
-  if (!config_dir) {
-    char *xdg_config_dir = g_strdup(getenv("XDG_CONFIG_HOME"));
-    if (!xdg_config_dir || !*xdg_config_dir) {
-      // Free the string if it is non-null but empty
-      if (xdg_config_dir) g_free(xdg_config_dir);
-      xdg_config_dir = g_strdup_printf("%s/.config", home_dir);
-    }
-
-    if (xdg_config_dir) {
-      int fd = -1;
-      struct stat statbuf;
-
-      if (*xdg_config_dir)
-        fd = stat(xdg_config_dir, &statbuf);
-
-      // If the XDG configuration directory exists, see if we can find a
-      // configuration file for mcabber inside.
-      if (fd != -1) {
-        char *xdg_mcabber_dir = g_strdup_printf("%s/mcabber", xdg_config_dir);
-        g_string_printf(sfilename, "%s/mcabberrc", xdg_mcabber_dir);
-        if ((fp = fopen(sfilename->str, "r")) != NULL) {
-          fclose(fp);
-          config_dir = xdg_mcabber_dir;
-        } else {
-          g_free(xdg_mcabber_dir);
-        }
-      }
-      g_free(xdg_config_dir);
-    }
-  }
-
-  if (!config_dir)
-      scr_log_print(LPRINT_NORMAL, "Cannot find configuration directory!\n");
-
-  g_string_free(sfilename, TRUE);
-  return config_dir;
-}
-
-//  cfg_read_file(filename, mainfile)
-// Read and parse config file "filename".  If filename is NULL,
-// try to open the configuration file at the default locations.
-// mainfile must be set to TRUE for the startup config file.
-// If mainfile is TRUE, the permissions of the configuration file will
-// be fixed if they're insecure.
-//
-int cfg_read_file(char *filename, guint mainfile)
-{
-  static unsigned int runtime;
-  FILE *fp;
-  char *buf;
-  char *line, *eol;
-  unsigned int ln = 0;
-  int err = 0;
-
-  if (!filename) {
-    const gchar *mcabber_conf_dir;
-    gchar *def_filename;
-
-    if (!mainfile) {
-      scr_LogPrint(LPRINT_LOGNORM, "No file name provided");
-      return -1;
-    }
-
-    mcabber_conf_dir = settings_get_mcabber_config_dir();
-    if (!mcabber_conf_dir) {
-      // Try home directory
-      const char *home_dir = getenv("HOME");
-      if (!home_dir) {
-        scr_log_print(LPRINT_NORMAL, "Cannot find any configuration file!\n");
-        err = -1;
-        goto cfg_read_file_return;
-      }
-      def_filename = g_strdup_printf("%s/.mcabberrc", home_dir);
-    } else {
-      def_filename = g_strdup_printf("%s/mcabberrc", mcabber_conf_dir);
-    }
-
-    if ((fp = fopen(def_filename, "r")) == NULL) {
-      fprintf(stderr, "Cannot open config file!\n");
-      g_free(def_filename);
-      err = -1;
-      goto cfg_read_file_return;
-    }
-    // Check configuration file permissions
-    // As it could contain sensitive data, we make it user-readable only.
-    checkset_perm(def_filename, TRUE);
-    scr_log_print(LPRINT_LOGNORM, "Reading %s", def_filename);
-
-    // Check mcabber directory permissions.
-    // Here we just warn, we don't change the mode.
-    if (mcabber_conf_dir)
-      checkset_perm(mcabber_conf_dir, FALSE);
-
-    g_free(def_filename);
+  xdg = getenv("XDG_CONFIG_HOME");
+  if (xdg && *xdg) {
+    config_dir = g_strdup_printf("%s/mcabber-ng", xdg);
   } else {
-    // filename was specified
-    if ((fp = fopen(filename, "r")) == NULL) {
-      const char *msg = "Cannot open configuration file";
-      if (mainfile)
-        perror(msg);
-      else
-        scr_LogPrint(LPRINT_LOGNORM, "%s (%s).", msg, filename);
-      err = -2;
-      goto cfg_read_file_return;
+    const char *home_dir = getenv("HOME");
+    if (!home_dir) {
+      scr_log_print(LPRINT_LOG, "Can't find home dir!");
+      fprintf(stderr, "Can't find home dir!\n");
+      return NULL;
     }
-    // Check configuration file permissions (see above)
-    // We don't change the permissions if that's not the main file.
-    if (mainfile)
-      checkset_perm(filename, TRUE);
-    scr_LogPrint(LPRINT_LOGNORM, "Reading %s", filename);
+    config_dir = g_strdup_printf("%s/.config/mcabber-ng", home_dir);
   }
-
-  buf = g_new(char, CONFLINE_LENGTH+1);
-
-  while (fgets(buf+1, CONFLINE_LENGTH, fp) != NULL) {
-    // The first char is reserved to add a '/', to make a command line
-    line = buf+1;
-    ln++;
-
-    // Strip leading spaces
-    while (isspace(*line))
-      line++;
-
-    // Make eol point to the last char of the line
-    for (eol = line ; *eol ; eol++)
-      ;
-    if (eol > line)
-      eol--;
-
-    // Strip trailing spaces
-    while (eol > line && isspace(*eol))
-      *eol-- = 0;
-
-    // Ignore empty lines and comments
-    if ((*line == '\n') || (*line == '\0') || (*line == '#'))
-      continue;
-
-    // If we aren't in runtime (i.e. startup) we'll only accept "safe" commands
-    if (!runtime) {
-      const gchar *cmdend = strchr(line, ' ');
-      gchar *cmdname = NULL;
-      gboolean safe;
-      if (cmdend)
-        cmdname = g_strndup(line, cmdend - line);
-      safe = cmd_is_safe(cmdname ? cmdname : line);
-      g_free(cmdname);
-      if (!safe) {
-        scr_log_print(LPRINT_LOGNORM, "Error in configuration file (l. %d): "
-                      "this command can't be used here", ln);
-        err++;
-        continue;
-      }
-    }
-
-    // Set the leading COMMAND_CHAR to build a command line
-    // and process the command
-    *(--line) = COMMAND_CHAR;
-    process_command(line, TRUE);
-  }
-  g_free(buf);
-  fclose(fp);
-
-  if (filename)
-    scr_LogPrint(LPRINT_LOGNORM, "Loaded %s.", filename);
-
-cfg_read_file_return:
-  // If we're done with the main file parsing, we can assume that
-  // the next time this function is called will be at run time.
-  if (mainfile)
-    runtime = TRUE;
-  return err;
+  return config_dir;
 }
 
 //  parse_assigment(assignment, pkey, pval)

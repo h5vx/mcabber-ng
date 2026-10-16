@@ -13,6 +13,10 @@
 
 #define mlua_rawlen(L, idx)   lua_objlen((L), (idx))
 
+// Convert a relative stack index to an absolute one
+#define mlua_absindex(L, idx) \
+  (((idx) < 0 && (idx) > LUA_REGISTRYINDEX) ? lua_gettop(L) + (idx) + 1 : (idx))
+
 //  mlua_setfuncs(L, fns)
 // Register the functions into the table at the top of the stack.
 static inline void mlua_setfuncs(lua_State *L, const luaL_Reg *fns)

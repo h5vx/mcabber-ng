@@ -55,6 +55,7 @@
 #include "roster.h"
 #include "histolog.h"
 #include "settings.h"
+#include "mlua.h"
 #include "utils.h"
 #include "xmpp.h"
 #include "main.h"
@@ -693,6 +694,7 @@ gboolean scr_bind_key(const char *name, const char *command, GError **err)
     }
     canon = key_format(&k);
   }
+  mlua_unbind(canon);
   if (command)
     settings_set(SETTINGS_TYPE_BINDING, canon, command);
   else
@@ -4501,6 +4503,11 @@ static void bindcommand(keycode_t kcode)
   const gchar *boundcmd;
 
   keyname = scr_keycode_name(&kcode);
+  if (mlua_call_binding(keyname)) {
+    scr_check_auto_away(TRUE);
+    g_free(keyname);
+    return;
+  }
   boundcmd = settings_get(SETTINGS_TYPE_BINDING, keyname);
 
   if (boundcmd) {
