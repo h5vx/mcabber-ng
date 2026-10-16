@@ -1,0 +1,10 @@
+
+ /LUA kód
+
+Spustí kód v jazyce Lua.  Je-li kód výraz, zobrazí se jeho hodnota.
+Tabulka "mc" poskytuje přístup k mcabber-ng (viz oddíl CONFIGURATION FILE manuálové stránky).
+
+Příklady:
+ /lua 1+1
+ /lua mc.get("roster_width")
+ /lua mc.bind("Alt+s", function() mc.print("Ahoj") end)

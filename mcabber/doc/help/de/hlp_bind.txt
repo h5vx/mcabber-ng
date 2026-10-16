@@ -1,18 +1,19 @@
 
- /BIND [keycode [= command line]]
+ /BIND [Taste [= Befehl]]
 
-Den Befehl "command line" auf die Taste mit dem keycode legen. Um herauszufinden, ob eine bestimmte Taste noch nicht belegt ist, drücke diese und schaue in das Logfenster. "Unknow key=256" bedeutet dann, dass du irgendeinen Befehl auf die Taste mit dem keycode 265 legen kannst.
+Weist einer Tastenkombination einen Befehl zu.  Tasten werden mit ihrem Namen angegeben, z. B. "Alt+j", "Ctrl+Left", "F5" oder "Ctrl+Shift+PgUp".  Um den Namen einer Taste herauszufinden, drücken Sie sie: für nicht belegte Tasten erscheint im Log-Fenster eine Meldung wie "Unknown key: Alt+j".
 
 /bind
- Zeigt alle Tastaturkürzel an
-/bind keycode
- Zeigt den Befehl fuer die Taste mit dem keycode an
-/bind keycode=
- Entkürzelt die Taste mit dem angegebenen keycode
-/bind keycode = command line
- Legt den Befehl "command line" auf die Taste mit diesem keycode
+ Zeigt die Liste der Tastenbelegungen an
+/bind Taste
+ Zeigt den Befehl an, der dieser Taste zugewiesen ist
+/bind Taste =
+ Hebt die Belegung der Taste auf
+/bind Taste = Befehl
+ Weist der Taste den Befehl zu
 
-Beispiel: "/bind 265 = status away" (265 ist F1).
-
-Beachte das Tastencodes, je nach ncurses Konfiguration, unterschiedlich sein können.
-Und natürlich können anstatt direkten Befehlen auch Aliase auf Tasten gelegt werden. :]
+Modifikatoren: Ctrl (C), Alt (Meta, M), Shift (S), verbunden mit "+" oder "-".
+Benannte Tasten: Enter, Tab, Backspace, Esc, Space, Up, Down, Left, Right, Home, End, PgUp, PgDn, Ins, Del, F1..F63, WheelUp, WheelDown.  Jede andere Taste ist ein einzelnes Zeichen: "Alt+j", "Alt+ö", "Ctrl+=".
+Beispiel: "/bind F5 = roster toggle_offline"
+Hinweis: manche Kombinationen kann das Terminal nicht unterscheiden (Ctrl+i ist Tab, Ctrl+m ist Enter).
+Tipp: Aliase können statt Befehlen verwendet werden.

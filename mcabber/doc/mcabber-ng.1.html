@@ -2,8 +2,8 @@
 <html lang="en">
 <head>
 <meta http-equiv="Content-Type" content="text/html; charset=UTF-8">
-<meta name="generator" content="AsciiDoc 8.6.9">
-<title>MCABBER(1)</title>
+<meta name="generator" content="AsciiDoc 10.2.1">
+<title>MCABBER-NG(1)</title>
 <style type="text/css">
 /* Shared CSS for AsciiDoc xhtml11 and html5 backends */
 
@@ -434,7 +434,7 @@ thead, p.table.header {
 p.table {
   margin-top: 0;
 }
-/* Because the table frame attribute is overriden by CSS in most browsers. */
+/* Because the table frame attribute is overridden by CSS in most browsers. */
 div.tableblock > table[frame="void"] {
   border-style: none;
 }
@@ -730,31 +730,35 @@ asciidoc.install();
 /*]]>*/
 </script>
 </head>
-<body class="manpage">
+<body class="article">
 <div id="header">
-<h1>
-MCABBER(1) Manual Page
-</h1>
-<h2>NAME</h2>
-<div class="sectionbody">
-<p>mcabber -
-   a simple Jabber (XMPP) console client
-</p>
-</div>
+<h1>MCABBER-NG(1)</h1>
+<span id="author">Mikael BERTHE</span><br>
+<span id="email" class="monospaced">&lt;<a href="mailto:mcabber@lilotux.net">mcabber@lilotux.net</a>&gt;</span><br>
+<span id="revnumber">version 0.1.0-dev,</span>
+<span id="revdate">October 2026</span>
 </div>
 <div id="content">
 <div class="sect1">
+<h2 id="_name">NAME</h2>
+<div class="sectionbody">
+<div class="paragraph"><p>mcabber-ng - a Jabber (XMPP) console client configured in Lua</p></div>
+</div>
+</div>
+<div class="sect1">
 <h2 id="_synopsis">SYNOPSIS</h2>
 <div class="sectionbody">
-<div class="paragraph"><p><em>mcabber</em> [ -h | -V | -f configfile ]</p></div>
+<div class="paragraph"><p><em>mcabber-ng</em> [ -h | -V | -n ] [ -f configfile ]</p></div>
 </div>
 </div>
 <div class="sect1">
 <h2 id="_description">DESCRIPTION</h2>
 <div class="sectionbody">
-<div class="paragraph"><p><span class="monospaced">mcabber(1)</span> is a small Jabber (XMPP) console client.<br>
+<div class="paragraph"><p><span class="monospaced">mcabber-ng</span> is a small Jabber (XMPP) console client, based on <span class="monospaced">mcabber</span>.<br>
 For now it needs a configuration file to start, so please copy the sample
-mcabberrc file and adapt your connection settings.</p></div>
+init.lua file to $XDG_CONFIG_HOME/mcabber-ng/init.lua (usually
+~/.config/mcabber-ng/init.lua) and adapt your connection settings.  The
+configuration file is a Lua script, see the CONFIGURATION FILE section.</p></div>
 <div class="paragraph"><p>You also need to have an existing Jabber account to use this software, as
 it cannot (un)register accounts yet.</p></div>
 <div class="paragraph"><p>Here are some of the features of <span class="monospaced">mcabber</span>:</p></div>
@@ -839,7 +843,18 @@ it cannot (un)register accounts yet.</p></div>
 </dt>
 <dd>
 <p>
-        Use configuration file <em>configfile</em>
+        Use configuration file <em>configfile</em>.  The directory of this file is
+        used as the configuration directory.
+</p>
+</dd>
+<dt class="hdlist1">
+-n
+</dt>
+<dd>
+<p>
+        Load the configuration file, print the resulting options, aliases and
+        key bindings, and exit.  The exit status is not zero if the
+        configuration file cannot be loaded.
 </p>
 </dd>
 </dl></div>
@@ -878,7 +893,15 @@ back and forth.</p></div>
 <div class="paragraph"><p>PageUp and PageDown keys are used to move in the roster.</p></div>
 <div class="paragraph"><p>Up and Down arrow keys can be used to move in the input line history; they
 jump to the previous/next line from the history beginning with the same string
-(from first column to the cursor column).</p></div>
+(from first column to the cursor column).  When the input line has several
+rows, they move the cursor between the rows first.</p></div>
+<div class="paragraph"><p>Messages can have several lines: Alt+Enter (or Ctrl+j) inserts a line break,
+and Enter sends the whole message.  The input line grows as needed (see the
+<em>input_max_rows</em> option).</p></div>
+<div class="paragraph"><p>Pasted text is not sent line by line: it is inserted in the input line, and
+Enter sends it as one message.  Pasting is detected with the terminal
+"bracketed paste" mode, or, when the terminal doesn&#8217;t support it, when many
+keys including Enter are received at once.  See the <em>paste_mode</em> option.</p></div>
 <div class="paragraph"><p>To send a message, move to the chosen buddy in the buddylist, type your
 message and hit enter.  If the line begins with a slash, this will be
 interpreted as a command (see the COMMAND section below).  Hit escape to
@@ -894,19 +917,43 @@ Disable chat mode
 </p>
 </dd>
 <dt class="hdlist1">
-Ctrl-a
+Enter
 </dt>
 <dd>
 <p>
-Go to the beginning of the input line
+Send the message (or run the command)
 </p>
 </dd>
 <dt class="hdlist1">
-Ctrl-e
+Alt+Enter, Ctrl-j
 </dt>
 <dd>
 <p>
-Go to the end of the input line
+Insert a line break
+</p>
+</dd>
+<dt class="hdlist1">
+Ctrl-a, Home
+</dt>
+<dd>
+<p>
+Go to the beginning of the current line
+</p>
+</dd>
+<dt class="hdlist1">
+Ctrl-e, End
+</dt>
+<dd>
+<p>
+Go to the end of the current line
+</p>
+</dd>
+<dt class="hdlist1">
+Ctrl-Home/Ctrl-End
+</dt>
+<dd>
+<p>
+Go to the beginning/end of the input buffer
 </p>
 </dd>
 <dt class="hdlist1">
@@ -922,7 +969,7 @@ Up/Down
 </dt>
 <dd>
 <p>
-Move in the input line history
+Move between the rows of the input line, or in the input line history
 </p>
 </dd>
 <dt class="hdlist1">
@@ -994,7 +1041,7 @@ Ctrl-u
 </dt>
 <dd>
 <p>
-Delete from beginning of the line to the cursor
+Delete from beginning of the line to the cursor (or join the line with the previous one)
 </p>
 </dd>
 <dt class="hdlist1">
@@ -1002,7 +1049,7 @@ Ctrl-k
 </dt>
 <dd>
 <p>
-Delete from the cursor to the end of line
+Delete from the cursor to the end of line (or join the line with the next one)
 </p>
 </dd>
 <dt class="hdlist1">
@@ -1337,7 +1384,7 @@ John is online, can see your status, and sent you a message that you did not rea
 </p>
 </dd>
 <dt class="hdlist1">
-' {?} Sally'
+' \{?} Sally'
 </dt>
 <dd>
 <p>
@@ -1487,11 +1534,11 @@ Request unsubscription from the buddy&#8217;s presence updates
 </dl></div>
 </dd>
 <dt class="hdlist1">
-/bind [keycode [= command line]]
+/bind [key [= command line]]
 </dt>
 <dd>
 <p>
-        Bind the command to the key given as "keycode".  To examine which keys are currently not used look at <span class="monospaced">mcabber</span> log window and press examined key.  For example: "Unknown key=265" means that you can bind some command to key #265.
+        Bind the command line to a key combination.  Keys are given by name, like "Alt+j", "Ctrl+Left", "F5" or "Ctrl+Shift+PgUp" (see KEY NAMES below).  To find the name of a key, press it: unbound keys are reported in the log window, for example "Unknown key: Alt+j".
 </p>
 <div class="dlist"><dl>
 <dt class="hdlist1">
@@ -1503,7 +1550,7 @@ Display list of current bindings
 </p>
 </dd>
 <dt class="hdlist1">
-<em>keycode</em>
+<em>key</em>
 </dt>
 <dd>
 <p>
@@ -1511,24 +1558,23 @@ Display the command line bound to this key
 </p>
 </dd>
 <dt class="hdlist1">
-<em>keycode</em>=
+<em>key</em> =
 </dt>
 <dd>
 <p>
-Unbind key with code "keycode"
+Remove the binding of "key"
 </p>
 </dd>
 <dt class="hdlist1">
-<em>keycode</em> = command line
+<em>key</em> = command line
 </dt>
 <dd>
 <p>
-Bind "command line" to the key with code "keycode"
+Bind "command line" to the key
 </p>
 <div class="literalblock">
 <div class="content monospaced">
-<pre>Example: "/bind 265 = status away" (265 is F1). +
-Note: keycodes can be different depending on your ncurses configuration. +
+<pre>Example: "/bind F5 = roster toggle_offline" +
 Tip: aliases also can be used instead of commands.</pre>
 </div></div>
 </dd>
@@ -2186,7 +2232,7 @@ Lists modules in a format: [modulename]  [reference count] ([Manually/Automatica
         In multi-line mode, each line (except command lines) typed in the input line will be added to the multi-line message.  Once the message is finished, it can be sent to the current selected buddy with the "/msay send" command.<br>
         The <em>begin</em> subcommand enables multi-line mode.  Note that it allows a message subject to be specified.<br>
         The <em>verbatim</em> multi-line mode disables commands, so that it is possible to enter lines starting with a slash.  Only the "/msay" command (with send or abort parameters) can be used to exit verbatim mode.<br>
-        The <em>toggle</em> subcommand can be bound to a key to use the multi-line mode quickly (for example, "bind M13 = msay toggle" to switch using the Meta-Enter combination).
+        The <em>toggle</em> subcommand can be bound to a key to use the multi-line mode quickly (for example, "bind Alt+m = msay toggle"; Alt+Enter inserts a line break).
 </p>
 <div class="dlist"><dl>
 <dt class="hdlist1">
@@ -2894,7 +2940,7 @@ Set/update/delete an annotation. If there is no text, the current item&#8217;s a
 </dt>
 <dd>
 <p>
-        Read configuration files, that match glob pattern (sorted in alphabetical order).
+        Run the Lua files that match the glob pattern (sorted in alphabetical order).
 </p>
 </dd>
 <dt class="hdlist1">
@@ -2941,7 +2987,482 @@ Set/update/delete an annotation. If there is no text, the current item&#8217;s a
 <div class="sect1">
 <h2 id="_configuration_file">CONFIGURATION FILE</h2>
 <div class="sectionbody">
-<div class="paragraph"><p>See the provided sample configuration file, which should be self-documenting.</p></div>
+<div class="paragraph"><p>The configuration file, $XDG_CONFIG_HOME/mcabber-ng/init.lua by default, is a
+Lua script (Lua 5.1 / LuaJIT).  The provided sample configuration file
+(init.lua.example) documents all the options.  The <span class="monospaced">mc</span> table (also available
+with require "mcabber") gives access to mcabber-ng:</p></div>
+<div class="dlist"><dl>
+<dt class="hdlist1">
+mc.set { name = value, &#8230; }, mc.set(name, value)
+</dt>
+<dd>
+<p>
+        Set options.  Values can be strings, numbers or booleans (true is 1,
+        false is 0); nil removes the option.  mc.opt.name = value is
+        equivalent, and mc.opt.name or mc.get(name) read an option (as a
+        string).
+</p>
+</dd>
+<dt class="hdlist1">
+mc.alias { name = "command line", &#8230; }, mc.alias(name, command)
+</dt>
+<dd>
+<p>
+        Define command aliases.
+</p>
+</dd>
+<dt class="hdlist1">
+mc.bind { [key] = command, &#8230; }, mc.bind(key, command)
+</dt>
+<dd>
+<p>
+        Bind keys (see KEY NAMES) to command lines or to Lua functions.  A
+        function receives a table with the key name (<em>key</em> field).
+        mc.unbind(key) removes a binding, mc.bindings() returns all of them,
+        mc.key_name(name) returns the canonical name of a key.
+</p>
+</dd>
+<dt class="hdlist1">
+mc.command(command line)
+</dt>
+<dd>
+<p>
+        Run a mcabber command (the leading slash is optional).  While the
+        configuration file is loaded, only "safe" commands can be used (set,
+        bind, alias, pgp, source, status, color, otrpolicy, module).
+</p>
+</dd>
+<dt class="hdlist1">
+mc.color.roster(statuses, jid, color), mc.color.muc(room, mode), mc.color.mucnick(nick, color)
+</dt>
+<dd>
+<p>
+        Coloring rules, see the /color command.
+</p>
+</dd>
+<dt class="hdlist1">
+mc.module.load(name), mc.module.unload(name)
+</dt>
+<dd>
+<p>
+        Load or unload a module.
+</p>
+</dd>
+<dt class="hdlist1">
+mc.status(status [, message])
+</dt>
+<dd>
+<p>
+        Set your status.
+</p>
+</dd>
+<dt class="hdlist1">
+mc.timer(milliseconds, function [, repeat])
+</dt>
+<dd>
+<p>
+        Call the function after the delay (repeatedly if <em>repeat</em> is true,
+        until the function returns false).  Returns an id for mc.cancel(id).
+</p>
+</dd>
+<dt class="hdlist1">
+mc.on(event, function(ev) &#8230; end [, { priority = n }])
+</dt>
+<dd>
+<p>
+        Run a function when an event occurs (see EVENTS below).  Returns an
+        id for mc.off(id).  Handlers with a lower priority run first (default
+        0).  A handler can return mc.DROP (or false) to drop the event when
+        possible, or mc.STOP to stop running the other handlers.
+</p>
+</dd>
+<dt class="hdlist1">
+mc.send(jid, text [, { subject = "&#8230;" }]), mc.say(text)
+</dt>
+<dd>
+<p>
+        Send a message to a contact (or a room), or to the current buddy.
+</p>
+</dd>
+<dt class="hdlist1">
+mc.buddy.current()
+</dt>
+<dd>
+<p>
+        Information about the selected buddy: a table with the <em>jid</em>,
+        <em>name</em>, <em>type</em> ("user", "room", "agent", "group", "special"),
+        <em>status</em> and <em>resource</em> fields, or nil.
+</p>
+</dd>
+<dt class="hdlist1">
+mc.input.get(), mc.input.set(text), mc.input.insert(text)
+</dt>
+<dd>
+<p>
+        Read, replace or insert text in the input line.
+</p>
+</dd>
+<dt class="hdlist1">
+mc.print(&#8230;), mc.log(&#8230;), mc.debug(&#8230;)
+</dt>
+<dd>
+<p>
+        Print to the log window (mc.log also writes to the trace log file,
+        mc.debug only when debugging is enabled).
+</p>
+</dd>
+<dt class="hdlist1">
+mc.shell_quote(text)
+</dt>
+<dd>
+<p>
+        Quote a string for the shell.  Texts coming from the network
+        (messages, nicknames&#8230;) must always be quoted before being passed to
+        os.execute() or io.popen().
+</p>
+</dd>
+<dt class="hdlist1">
+mc.version, mc.config_dir, mc.config_file
+</dt>
+<dd>
+<p>
+        The mcabber-ng version, configuration directory and file.
+</p>
+</dd>
+</dl></div>
+<div class="paragraph"><p>Other Lua files can be loaded with require(): &lt;config dir&gt;/lua/ is in the
+module search path.  The <em>/lua</em> command runs Lua code at runtime ("/lua 1+1"
+prints 2) and <em>/source</em> runs a Lua file.</p></div>
+</div>
+</div>
+<div class="sect1">
+<h2 id="_events">EVENTS</h2>
+<div class="sectionbody">
+<div class="paragraph"><p>Handlers receive a table describing the event.  Times are Unix timestamps,
+statuses are "online", "free", "dnd", "notavail", "away", "invisible" or
+"offline".</p></div>
+<div class="dlist"><dl>
+<dt class="hdlist1">
+message_in
+</dt>
+<dd>
+<p>
+        A message has been received, before it is displayed and logged.
+        Fields: jid, resource, nick (rooms), text, muc (room message),
+        private (private message from a room participant), time, delayed,
+        carbon, error, encrypted ("pgp", "otr" or nil).  The handlers can
+        change <em>text</em>.  mc.DROP drops the message.
+</p>
+</dd>
+<dt class="hdlist1">
+message_received
+</dt>
+<dd>
+<p>
+        A message has been displayed.  Same fields as message_in, plus
+        attention, highlight (your nick is in a room message), own (your
+        message in a room), active (the window of this contact is open).
+</p>
+</dd>
+<dt class="hdlist1">
+message_send
+</dt>
+<dd>
+<p>
+        A message is about to be sent.  Fields: jid, bare_jid, text,
+        subject, muc, private.  The handlers can change <em>text</em> and
+        <em>subject</em>.  mc.DROP cancels the message.
+</p>
+</dd>
+<dt class="hdlist1">
+message_out
+</dt>
+<dd>
+<p>
+        A message has been sent.  Fields: jid, nick, text, muc, private,
+        time, carbon (sent by another client), encrypted.
+</p>
+</dd>
+<dt class="hdlist1">
+status
+</dt>
+<dd>
+<p>
+        The status of a contact has changed.  Fields: jid, resource, old,
+        new, message, priority, time.
+</p>
+</dd>
+<dt class="hdlist1">
+my_status
+</dt>
+<dd>
+<p>
+        Your status has changed.  Fields: old, new, message.
+</p>
+</dd>
+<dt class="hdlist1">
+connect, disconnect
+</dt>
+<dd>
+<p>
+        After the connection (when the roster has been received), before
+        the disconnection.
+</p>
+</dd>
+<dt class="hdlist1">
+unread
+</dt>
+<dd>
+<p>
+        The number of unread buffers has changed.  Fields: unread,
+        attention, muc_unread, muc_attention.
+</p>
+</dd>
+<dt class="hdlist1">
+subscription
+</dt>
+<dd>
+<p>
+        A subscription request or answer has been received.  Fields: type
+        ("subscribe", "unsubscribe", "subscribed", "unsubscribed"), jid,
+        message.  mc.DROP ignores it.
+</p>
+</dd>
+<dt class="hdlist1">
+receipt
+</dt>
+<dd>
+<p>
+        A message delivery receipt has been received.  Fields: jid, id.
+</p>
+</dd>
+<dt class="hdlist1">
+ready, quit
+</dt>
+<dd>
+<p>
+        The user interface is ready (before connecting), mcabber-ng is
+        exiting.
+</p>
+</dd>
+<dt class="hdlist1">
+hook-*
+</dt>
+<dd>
+<p>
+        Hooks run by modules; the fields are the hook arguments (strings).
+</p>
+</dd>
+</dl></div>
+<div class="paragraph"><p>Lua code called by mcabber-ng (handlers, key bindings, timers) must finish
+within <em>lua_timeout_ms</em> milliseconds (default 2000, 0 disables the check).
+The LuaJIT compiler is disabled because compiled code cannot be interrupted;
+call jit.on() in the configuration file to enable it.</p></div>
+</div>
+</div>
+<div class="sect1">
+<h2 id="_message_format">MESSAGE FORMAT</h2>
+<div class="sectionbody">
+<div class="paragraph"><p>The text displayed before each message (the "head": time, direction mark,
+nickname&#8230;) can be changed with mc.format:</p></div>
+<div class="dlist"><dl>
+<dt class="hdlist1">
+mc.format.message
+</dt>
+<dd>
+<p>
+        A template for all messages, a table of templates per kind of
+        message ("in", "out", "info", "error", "special" for the status
+        window, "default"), or a Lua function (see below).
+</p>
+</dd>
+<dt class="hdlist1">
+mc.format.time
+</dt>
+<dd>
+<p>
+        The default time format (strftime(3) format), e.g. "%H:%M".  By
+        default it depends on the <em>time_prefix</em> option.
+</p>
+</dd>
+<dt class="hdlist1">
+mc.format.indent
+</dt>
+<dd>
+<p>
+        Indentation of the following lines of a message (number of
+        columns).  By default they are aligned with the text of the first
+        line.
+</p>
+</dd>
+</dl></div>
+<div class="paragraph"><p>Templates contain text and fields:</p></div>
+<div class="literalblock">
+<div class="content monospaced">
+<pre>{field}          value of the field
+{field:10}       padded to 10 columns ({field:&gt;10} on the right,
+                 {field:^10} centered); {field:.10} truncated
+{time:%H:%M}     time with a specific format
+{?field}...{/}   text used only if the field is set ({!field}...{/}
+                 if it is not set)
+{#style}         the following text uses this style (general, msgin,
+                 msgout, msghl, info, timestamp, readmark, status,
+                 roster, nick for the color of the nickname...); {#}
+                 returns to the color of the line
+{{ and }}        braces</pre>
+</div></div>
+<div class="paragraph"><p>Fields: time, mark (the original "&#8656;=", "-&#8594;", "<strong>*</strong>"&#8230;), nick (sender in
+rooms and for actions, contact or own username otherwise), kind, and the
+flags me (action, "/me"), muc, private (private message in a room),
+delayed, receipt (waiting for a receipt), carbon, highlight, own (your
+message in a room), pgp, otr, encrypted, in, out, info, error, special.</p></div>
+<div class="paragraph"><p>The default format is:</p></div>
+<div class="literalblock">
+<div class="content monospaced">
+<pre>{?delayed}{#timestamp}{/}{time}{#} {mark} {?private}PRIV#&lt;{nick}&gt; {/}
+{?me}{#nick}*{nick}{#} {/}{?muc}{!me}{#nick}&lt;{nick}&gt;{#} {/}{/}</pre>
+</div></div>
+<div class="paragraph"><p>(without the line break).  A Lua function receives a table with the fields
+(time is a number) and returns a string, a list of segments ("text" or
+{ "text", "style" }), or nil to use the default format.  Example:</p></div>
+<div class="literalblock">
+<div class="content monospaced">
+<pre>mc.format.message = {
+  default = "{time:%H:%M} {#nick}{nick:&gt;10.10}{#} | ",
+  info = "{time:%H:%M}            * ",
+}</pre>
+</div></div>
+</div>
+</div>
+<div class="sect1">
+<h2 id="_user_interface">USER INTERFACE</h2>
+<div class="sectionbody">
+<div class="dlist"><dl>
+<dt class="hdlist1">
+Frames
+</dt>
+<dd>
+<p>
+        The <em>ui_borders</em> option draws frames around the windows: "rounded",
+        "single", "double", "heavy", "ascii" or "none" (default).  The titles
+        of the roster and log frames are set by <em>ui_title_roster</em> and
+        <em>ui_title_log</em>; the chat status line is displayed in the frame above
+        the chat window.  Changes are applied by /screen_refresh (Ctrl-l).
+</p>
+</dd>
+<dt class="hdlist1">
+Roster and status lines
+</dt>
+<dd>
+<p>
+        mc.format.roster (a template, or a table of templates for
+        "contact", "room", "group" and "special" items, or a function),
+        mc.format.chat_status and mc.format.main_status change the roster
+        items and the status lines (see MESSAGE FORMAT for the templates;
+        {name:*} uses the available width and {&gt;} aligns the rest on the
+        right).  mc.format.icons is a table of status icons (online, free,
+        away, notavail, dnd, invisible, offline, unknown, room, room_out).
+</p>
+<div class="literalblock">
+<div class="content monospaced">
+<pre>Roster fields: name, jid, status, status_char, icon, pending (the
+"#", "+", "." or attention sign), unread (count), count (members of
+a folded group), type, selected, folded, msg, composing, paused,
+sub_from, sub_to.</pre>
+</div></div>
+<div class="literalblock">
+<div class="content monospaced">
+<pre>Chat status fields: name, jid, resource, type, type_name, status,
+status_char, icon, msg (status message or room topic), chatstate
+(active, composing, paused, inactive, gone), chatmode, locked,
+unread.</pre>
+</div></div>
+<div class="literalblock">
+<div class="content monospaced">
+<pre>Main status fields: unread (sign), status, status_char, icon, info,
+msg, jid.</pre>
+</div></div>
+</dd>
+<dt class="hdlist1">
+Input prompt
+</dt>
+<dd>
+<p>
+        mc.format.input_prompt is displayed before the input line (it uses at
+        most a third of the width).  Fields: name, jid, type (of the current
+        buddy), chatmode, command (the line is a command), multiline (/msay
+        mode).
+</p>
+<div class="literalblock">
+<div class="content monospaced">
+<pre>Style names can contain fields: {#status_$status} uses the
+status_online, status_away... styles.</pre>
+</div></div>
+</dd>
+<dt class="hdlist1">
+Themes
+</dt>
+<dd>
+<p>
+        Themes are provided as Lua modules, for example
+        mc.theme(require "mcabber.themes.modern").  Available themes: modern,
+        classic (the original look), and the color themes of the original
+        mcabber: colorcli, light, light2, mikael-256, oliver.  A theme is a
+        Lua table of styles, with <em>options</em> and <em>format</em> sections and an
+        optional <em>setup</em> function (see STYLES AND THEMES); it can be written
+        in &lt;config dir&gt;/lua/.
+</p>
+</dd>
+</dl></div>
+</div>
+</div>
+<div class="sect1">
+<h2 id="_styles_and_themes">STYLES AND THEMES</h2>
+<div class="sectionbody">
+<div class="paragraph"><p>Colors and text attributes are defined by styles:</p></div>
+<div class="literalblock">
+<div class="content monospaced">
+<pre>mc.style("msgin", "fg=#c0caf5 bg=default")
+mc.style("timestamp", { fg = "#565f89", italic = true })
+mc.theme { general = "white", status = "black on cyan bold", ... }</pre>
+</div></div>
+<div class="paragraph"><p>A style is a string of words: a foreground color, "on" and a background
+color, "fg=COLOR", "bg=COLOR", and attributes (bold, dim, italic,
+underline, reverse, blink, standout); or a table with the <em>fg</em> and <em>bg</em>
+fields and boolean attributes.  Colors are default, black, red, green,
+yellow, blue, magenta, cyan, white (optionally prefixed by "bright"), a
+palette number (0-255) or "#rrggbb".  Colors are approximated when the
+terminal has less colors.  24-bit colors are used if the terminal supports
+them (e.g. TERM=xterm-direct); the <em>ui_colors</em> option ("auto", "8", "16",
+"256" or "truecolor") overrides the detection.</p></div>
+<div class="paragraph"><p>The styles of the interface are: general, msgin, msgout, msghl, info,
+timestamp, readmark, status (status lines), log, roster, rostersel
+(selected item), rosterselmsg, rosternewmsg, border, title, title_active,
+roster_group, roster_unread, status_online, status_free, status_away,
+status_notavail, status_dnd, status_invisible, status_offline, badge,
+nick_self, input, input_prompt.  The "background", "bgstatus" and
+"bgrostersel" entries are background colors.  Any other name can be
+defined and used in formats ({#name}).  The old color_* options still
+work for the first ones.</p></div>
+<div class="paragraph"><p>mc.theme(t) sets the styles of the table t; its optional <em>options</em> and
+<em>format</em> fields are passed to mc.set and mc.format.</p></div>
+</div>
+</div>
+<div class="sect1">
+<h2 id="_key_names">KEY NAMES</h2>
+<div class="sectionbody">
+<div class="paragraph"><p>A key combination is written with modifiers joined to the key by plus
+signs, like "Ctrl+Alt+Left".  Modifiers are Ctrl (or C), Alt (or Meta, M)
+and Shift (or S); a minus sign can be used instead of the plus sign
+("M-j").  Names are not case-sensitive, except single characters.</p></div>
+<div class="paragraph"><p>Named keys are: Enter, Tab, Backspace, Esc, Space, Up, Down, Left, Right,
+Home, End, PgUp, PgDn, Ins, Del, Begin, F1 to F63, WheelUp, WheelDown.  Any
+other key is a single character, like "Alt+j", "Alt+ж", "Ctrl+=" or "Alt+-"
+("Alt+Plus" for the plus sign).</p></div>
+<div class="paragraph"><p>Some combinations cannot be told apart by terminals: Ctrl+i is Tab, Ctrl+m
+is Enter, Ctrl+[ is Esc, and Shift with a letter is the uppercase letter
+("Alt+Shift+j" is "Alt+J").  Combinations like Ctrl+Enter or Shift+Enter
+are only available with terminals that report them (CSI u / modifyOtherKeys).</p></div>
 </div>
 </div>
 <div class="sect1">
@@ -2950,12 +3471,12 @@ Set/update/delete an annotation. If there is no text, the current item&#8217;s a
 <div class="paragraph"><p>The following files can be used by <span class="monospaced">mcabber(1)</span>:</p></div>
 <div class="literalblock">
 <div class="content monospaced">
-<pre>$HOME/.mcabber/mcabberrc    Default configuration file
-$HOME/.config/mcabber/mcabberrc Alternate location (can use XDG_CONFIG_HOME)
-$HOME/.mcabberrc            Configuration file used if no other has been found
-$HOME/.mcabber/histo/       Default directory for storing chat history files, if enabled
-/usr/share/mcabber/help/    Default directory for online help files
-/usr/lib/mcabber/           Default directory for modules</pre>
+<pre>$HOME/.config/mcabber-ng/init.lua   Default configuration file (uses XDG_CONFIG_HOME)
+$HOME/.config/mcabber-ng/lua/       Lua modules directory (for require)
+$HOME/.config/mcabber-ng/histo/     Default directory for storing chat history files, if enabled
+/usr/share/mcabber-ng/help/         Default directory for online help files
+/usr/share/mcabber-ng/init.lua.example  Sample configuration file
+/usr/lib/mcabber-ng/                Default directory for modules</pre>
 </div></div>
 </div>
 </div>
@@ -2978,7 +3499,7 @@ Please visit our website to find out about the MUC room and the bug tracker.</p>
 <div class="sectionbody">
 <div class="paragraph"><p><a href="https://mcabber.com/">Main web site</a><br>
 <a href="https://wiki.mcabber.com/">Official wiki</a><br>
-xmpp://mcabber@conf.lilotux.net[MCabber MUC room]</p></div>
+xmpp:mcabber@conf.lilotux.net[MCabber MUC room]</p></div>
 </div>
 </div>
 <div class="sect1">
@@ -2993,9 +3514,9 @@ License (GPL).</p></div>
 <div id="footnotes"><hr></div>
 <div id="footer">
 <div id="footer-text">
-Version 1.1.3-dev<br>
+Version 0.1.0-dev<br>
 Last updated
- 2021-10-24 21:29:33 CEST
+ 2026-10-17 05:17:50 WITA
 </div>
 </div>
 </body>

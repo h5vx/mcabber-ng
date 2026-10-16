@@ -5,6 +5,8 @@
  /ILINE hist_beginning_search_bwd|hist_beginning_search_fwd
  /ILINE hist_prev|hist_next
  /ILINE iline_start|iline_end|iline_fdel|iline_bdel
+ /ILINE buffer_start|buffer_end|newline
+ /ILINE line_up_or_hist|line_down_or_hist
  /ILINE iline_accept|iline_accept_down_hist
  /ILINE iline_insert
  /ILINE clear_history
@@ -47,13 +49,23 @@ Befehle für die Eingabezeile
 /iline hist_next
  Nächste Zeile der History
 /iline iline_start
- Der Cursor springt an den Anfang der Eingabezeile
+ Springt an den Anfang der aktuellen Zeile
 /iline iline_end
- Der Cursor springt an das Ende der Eingabezeile
+ Springt an das Ende der aktuellen Zeile
 /iline iline_fdel
- Alle Zeichen vom Cursor bis zum Ende der Zeile löschen
+ Löscht vom Cursor bis zum Zeilenende (am Zeilenende wird die Zeile mit der nächsten verbunden)
 /iline iline_bdel
- Alle Zeichen vom Cursor bis zum Beginn der Zeile löschen
+ Löscht vom Zeilenanfang bis zum Cursor (am Zeilenanfang wird die Zeile mit der vorherigen verbunden)
+/iline buffer_start
+ Springt an den Anfang der Eingabe (erste Zeile)
+/iline buffer_end
+ Springt an das Ende der Eingabe (letzte Zeile)
+/iline newline
+ Fügt einen Zeilenumbruch ein: die Nachricht hat mehrere Zeilen
+/iline line_up_or_hist
+ Springt in die vorherige Zeile der Eingabe, in der ersten Zeile Rückwärtssuche im Verlauf
+/iline line_down_or_hist
+ Springt in die nächste Zeile der Eingabe, in der letzten Zeile Vorwärtssuche im Verlauf
 /iline iline_accept
  Zeile akzeptieren
 /iline iline_accept_down_hist

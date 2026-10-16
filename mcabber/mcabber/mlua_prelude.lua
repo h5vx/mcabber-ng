@@ -233,11 +233,16 @@ function mc.theme(t)
       for fk, fv in pairs(v) do
         mc.format[fk] = fv
       end
+    elseif k == "setup" then
+      -- Called after the styles have been set
     elseif k == "name" then
       -- Informative only
     else
       mc.style(k, v)
     end
+  end
+  if type(t.setup) == "function" then
+    t.setup()
   end
 end
 

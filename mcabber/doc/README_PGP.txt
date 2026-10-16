@@ -12,10 +12,9 @@ In the configuration file, enable pgp and set pgp_private_key to your key id.
 Your key id can be found with the following command:
   % gpg --list-keys --keyid-format long your_name
 
-Example (in $HOME/.mcabber/mcabberrc):
+Example (in $HOME/.config/mcabber-ng/init.lua):
 
-set pgp = 1
-set pgp_private_key = "E3E6A9C1A6A013D3"
+mc.set { pgp = 1, pgp_private_key = "E3E6A9C1A6A013D3" }
 
 
 ## Encrypting messages ##

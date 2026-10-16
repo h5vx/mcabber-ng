@@ -91,6 +91,7 @@ static guint ui_attn_sign_prio_level     = ROSTER_UI_PRIO_ATTENTION_MESSAGE;
 static void scr_cancel_current_completion(void);
 static void scr_end_current_completion(void);
 static void scr_insert_text(const char*);
+static guint input_text_width(void);
 static void scr_handle_tab(gboolean fwd);
 
 static void scr_glog_print(const gchar *log_domain, GLogLevelFlags log_level,
@@ -4665,7 +4666,8 @@ void readline_insert_newline(void)
 // history when the cursor is on the first/last row.
 void readline_line_up_or_hist(void)
 {
-  il_layout(inputLine, ptr_inputline - inputLine, maxX, &InputLayout);
+  il_layout(inputLine, ptr_inputline - inputLine, input_text_width(),
+            &InputLayout);
   if (InputLayout.cursor_row == 0) {
     readline_hist_beginning_search_bwd();
     return;
@@ -4677,7 +4679,8 @@ void readline_line_up_or_hist(void)
 
 void readline_line_down_or_hist(void)
 {
-  il_layout(inputLine, ptr_inputline - inputLine, maxX, &InputLayout);
+  il_layout(inputLine, ptr_inputline - inputLine, input_text_width(),
+            &InputLayout);
   if (InputLayout.cursor_row + 1 >= InputLayout.rows) {
     readline_hist_beginning_search_fwd();
     return;
@@ -4889,6 +4892,59 @@ static void scr_end_current_completion(void)
   completion_started = FALSE;
 }
 
+/* -- Input prompt (mc.format.input_prompt) -- */
+
+static const char *const prompt_fields[] = {
+  "name", "jid", "type", "chatmode", "command", "multiline", NULL
+};
+
+static gchar *prompt_field(const char *name, const char *arg, gpointer data)
+{
+  gpointer bud = current_buddy ? BUDDATA(current_buddy) : NULL;
+
+  if (!strcmp(name, "name"))
+    return bud ? g_strdup(buddy_getname(bud)) : NULL;
+  if (!strcmp(name, "jid"))
+    return bud ? g_strdup(buddy_getjid(bud)) : NULL;
+  if (!strcmp(name, "type")) {
+    guint t = bud ? buddy_gettype(bud) : 0;
+    return g_strdup((t & ROSTER_TYPE_USER) ? "user" :
+                    (t & ROSTER_TYPE_ROOM) ? "room" :
+                    (t & ROSTER_TYPE_AGENT) ? "agent" :
+                    (t & ROSTER_TYPE_GROUP) ? "group" : "special");
+  }
+  if (!strcmp(name, "chatmode"))
+    return chatmode ? g_strdup("1") : NULL;
+  if (!strcmp(name, "command"))
+    return inputLine[0] == COMMAND_CHAR ? g_strdup("1") : NULL;
+  if (!strcmp(name, "multiline"))
+    return multimode ? g_strdup("1") : NULL;
+  return NULL;
+}
+
+//  input_prompt(out)
+// Render the input prompt; returns its width (0 if there is none).  The
+// prompt uses at most a third of the screen.
+static guint input_prompt(sstr_t *out)
+{
+  if (!msgfmt_ui_has("input_prompt"))
+    return 0;
+  if (!msgfmt_ui("input_prompt", NULL, prompt_fields, prompt_field, NULL,
+                 maxX / 3, out))
+    return 0;
+  return MIN(out->width, (guint)maxX / 3);
+}
+
+//  input_text_width()
+// Width available for the text of the input line.
+static guint input_text_width(void)
+{
+  sstr_t *p = sstr_new();
+  guint w = input_prompt(p);
+  sstr_free(p);
+  return maxX > (int)w + 1 ? maxX - w : 1;
+}
+
 //  input_max_rows()
 // Maximum height of the input line window.
 static guint input_max_rows(void)
@@ -4903,11 +4959,14 @@ static guint input_max_rows(void)
 // when the text needs more rows.
 static void refresh_inputline(void)
 {
-  guint r, visible, height;
+  guint r, visible, height, pw;
   gboolean spell = FALSE;
   int width = getmaxx(inputWnd);
+  sstr_t *prompt = sstr_new();
 
-  il_layout(inputLine, ptr_inputline - inputLine, maxX, &InputLayout);
+  pw = input_prompt(prompt);
+  il_layout(inputLine, ptr_inputline - inputLine,
+            maxX > (int)pw + 1 ? maxX - pw : 1, &InputLayout);
 
   height = MIN(InputLayout.rows, input_max_rows());
   if (height != (guint)Input_Win_Height) {
@@ -4934,11 +4993,16 @@ static void refresh_inputline(void)
 #endif
 
   werase(inputWnd);
+  if (pw && input_scroll == 0) {
+    wmove(inputWnd, 0, 0);
+    draw_sstr(inputWnd, prompt, A_NORMAL, FALSE, pw);
+  }
+  sstr_free(prompt);
   for (r = 0; r < visible && input_scroll + r < InputLayout.rows; r++) {
     char *p = inputLine + il_row_start(&InputLayout, input_scroll + r);
     char *end = inputLine + il_row_end(&InputLayout, input_scroll + r);
 
-    wmove(inputWnd, r, 0);
+    wmove(inputWnd, r, pw);
     while (p < end) {
       char *next = next_char(p);
 #if defined(WITH_ENCHANT) || defined(WITH_ASPELL)
@@ -4955,7 +5019,7 @@ static void refresh_inputline(void)
     }
   }
   wmove(inputWnd, InputLayout.cursor_row - input_scroll,
-        MIN((int)InputLayout.cursor_col, width - 1));
+        MIN((int)(InputLayout.cursor_col + pw), width - 1));
 }
 
 //  scr_get_inputline(), scr_set_inputline(text), scr_insert_inputline(text)

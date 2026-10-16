@@ -67,6 +67,7 @@ return {
   status_unknown   = { fg = c.fg_dim },
   status_room      = { fg = c.magenta },
   status_room_out  = { fg = c.fg_dim },
+  input_prompt     = { fg = c.blue, bold = true },
   dim              = { fg = c.fg_dim },
   accent           = { fg = c.blue },
 
@@ -108,6 +109,7 @@ return {
                   .. "{?resource}{#dim}/{resource}{#}{/}"
                   .. "{?msg} {#dim}— {msg:*}{#}{/} "
                   .. "{>}{?chatstate} {#dim}{chatstate}{#} {/}",
+    input_prompt = "{#input_prompt}{?command}:{/}{!command}❯{/}{#} ",
     main_status = " {?unread}{#roster_unread}{unread}{#} {/}"
                   .. "{#status_$status}{icon}{#} {status}"
                   .. "{?msg}{#dim} — {msg:*}{#}{/}"

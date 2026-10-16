@@ -1,4 +1,4 @@
 
- /SOURCE maska
+ /SOURCE vzor
 
-Načte kounfigurační soubory, které odpovídají dané masce (v abecedním pořadí).
+Spustí soubory Lua odpovídající vzoru (v abecedním pořadí).

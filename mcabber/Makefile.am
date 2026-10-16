@@ -11,4 +11,9 @@ dist_pkgdata_DATA = init.lua.example
 # Lua modules: themes
 luathemedir = $(pkgdatadir)/lua/mcabber/themes
 dist_luatheme_DATA = lua/mcabber/themes/classic.lua \
-		     lua/mcabber/themes/modern.lua
+		     lua/mcabber/themes/modern.lua \
+		     lua/mcabber/themes/colorcli.lua \
+		     lua/mcabber/themes/light.lua \
+		     lua/mcabber/themes/light2.lua \
+		     lua/mcabber/themes/mikael-256.lua \
+		     lua/mcabber/themes/oliver.lua

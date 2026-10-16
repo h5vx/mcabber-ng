@@ -5,6 +5,8 @@
  /ILINE hist_beginning_search_bwd|hist_beginning_search_fwd
  /ILINE hist_prev|hist_next
  /ILINE iline_start|iline_end|iline_fdel|iline_bdel
+ /ILINE buffer_start|buffer_end|newline
+ /ILINE line_up_or_hist|line_down_or_hist
  /ILINE iline_accept|iline_accept_down_hist
  /ILINE iline_insert
  /ILINE clear_history
@@ -46,13 +48,23 @@ Comandi disponibili:
 /iline hist_next
  La riga successiva nella history
 /iline iline_start
- Vai all'inizio della riga di input
+ Va all'inizio della riga corrente
 /iline iline_end
- Vai alla fine della riga di input
+ Va alla fine della riga corrente
 /iline iline_fdel
- Cancella dal cursore alla fine della riga
+ Cancella dal cursore alla fine della riga (a fine riga la unisce alla successiva)
 /iline iline_bdel
- Cancella dall'inizio della riga fino alla posizione del cursore
+ Cancella dall'inizio della riga al cursore (a inizio riga la unisce alla precedente)
+/iline buffer_start
+ Va all'inizio dell'input (prima riga)
+/iline buffer_end
+ Va alla fine dell'input (ultima riga)
+/iline newline
+ Inserisce un a capo: il messaggio avrà più righe
+/iline line_up_or_hist
+ Va alla riga precedente dell'input, o cerca indietro nella cronologia dalla prima riga
+/iline line_down_or_hist
+ Va alla riga successiva dell'input, o cerca avanti nella cronologia dall'ultima riga
 /iline iline_accept
  Accetta la linea
 /iline iline_accept_down_hist

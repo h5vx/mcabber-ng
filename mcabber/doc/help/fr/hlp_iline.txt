@@ -5,6 +5,8 @@
  /ILINE hist_beginning_search_bwd|hist_beginning_search_fwd
  /ILINE hist_prev|hist_next
  /ILINE iline_start|iline_end|iline_fdel|iline_bdel
+ /ILINE buffer_start|buffer_end|newline
+ /ILINE line_up_or_hist|line_down_or_hist
  /ILINE iline_accept|iline_accept_down_hist
  /ILINE iline_insert
  /ILINE clear_history
@@ -46,13 +48,23 @@ Cette commande permet de manipuler la ligne de commandes. En général elle sera
 /iline hist_next
  Charger la ligne suivante de l'historique ligne de commande
 /iline iline_start
- Aller au début de la ligne de commande
+ Aller au début de la ligne courante
 /iline iline_end
- Aller à la fin de la ligne de commande
+ Aller à la fin de la ligne courante
 /iline iline_fdel
- Effacer la fin de la ligne de commande depuis le curseur
+ Effacer du curseur à la fin de la ligne (en fin de ligne, la joindre à la suivante)
 /iline iline_bdel
- Effacer le début de la ligne de commande jusqu'au curseur
+ Effacer du début de la ligne au curseur (en début de ligne, la joindre à la précédente)
+/iline buffer_start
+ Aller au début de la saisie (première ligne)
+/iline buffer_end
+ Aller à la fin de la saisie (dernière ligne)
+/iline newline
+ Insérer un saut de ligne : le message aura plusieurs lignes
+/iline line_up_or_hist
+ Aller à la ligne précédente de la saisie, ou chercher en arrière dans l'historique sur la première ligne
+/iline line_down_or_hist
+ Aller à la ligne suivante de la saisie, ou chercher en avant dans l'historique sur la dernière ligne
 /iline iline_accept
  Accepter/valider la ligne de commande
 /iline iline_accept_down_hist

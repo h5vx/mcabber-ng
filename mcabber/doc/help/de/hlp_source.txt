@@ -1,4 +1,4 @@
 
- /SOURCE pattern
+ /SOURCE Muster
 
-Alle Konfigurationsdateien laden, welche auf das glob Muster "pattern" passen.
+Führt die Lua-Dateien aus, die dem Muster entsprechen (in alphabetischer Reihenfolge).

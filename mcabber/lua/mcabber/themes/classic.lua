@@ -5,6 +5,6 @@ return {
   options = { ui_borders = "none" },
   format = {
     message = false, roster = false, chat_status = false,
-    main_status = false, icons = false,
+    main_status = false, icons = false, input_prompt = false,
   },
 }

@@ -1,11 +1,11 @@
-MCABBER(1)
-===========
+MCABBER-NG(1)
+=============
 Mikael BERTHE <mcabber@lilotux.net>
-v1.1.3-dev, October 2021
+v0.1.0-dev, October 2026
 
 NAME
 ----
-mcabber - a simple Jabber (XMPP) console client
+mcabber-ng - a Jabber (XMPP) console client configured in Lua
 
 SYNOPSIS
 --------
@@ -411,7 +411,7 @@ COMMANDS RELATED TO MCABBER
         In multi-line mode, each line (except command lines) typed in the input line will be added to the multi-line message.  Once the message is finished, it can be sent to the current selected buddy with the "/msay send" command. +
         The 'begin' subcommand enables multi-line mode.  Note that it allows a message subject to be specified. +
         The 'verbatim' multi-line mode disables commands, so that it is possible to enter lines starting with a slash.  Only the "/msay" command (with send or abort parameters) can be used to exit verbatim mode. +
-        The 'toggle' subcommand can be bound to a key to use the multi-line mode quickly (for example, "bind Alt+Enter = msay toggle").
+        The 'toggle' subcommand can be bound to a key to use the multi-line mode quickly (for example, "bind Alt+m = msay toggle"; Alt+Enter inserts a line break).
 
         'begin' [subject];;  Enter multi-line mode
         'verbatim';;  Enter verbatim multi-line mode
@@ -778,7 +778,7 @@ Roster and status lines::
         "contact", "room", "group" and "special" items, or a function),
         mc.format.chat_status and mc.format.main_status change the roster
         items and the status lines (see MESSAGE FORMAT for the templates;
-        {name:*} uses the available width and {>} aligns the rest on the
+        \{name:*} uses the available width and {>} aligns the rest on the
         right).  mc.format.icons is a table of status icons (online, free,
         away, notavail, dnd, invisible, offline, unknown, room, room_out).
 
@@ -795,14 +795,23 @@ Roster and status lines::
         Main status fields: unread (sign), status, status_char, icon, info,
         msg, jid.
 
+Input prompt::
+        mc.format.input_prompt is displayed before the input line (it uses at
+        most a third of the width).  Fields: name, jid, type (of the current
+        buddy), chatmode, command (the line is a command), multiline (/msay
+        mode).
+
         Style names can contain fields: {#status_$status} uses the
         status_online, status_away... styles.
 
 Themes::
-        Two themes are provided: mc.theme(require "mcabber.themes.modern")
-        and mc.theme(require "mcabber.themes.classic").  A theme is a Lua
-        table of styles, with 'options' and 'format' sections (see STYLES AND
-        THEMES); it can be written in <config dir>/lua/.
+        Themes are provided as Lua modules, for example
+        mc.theme(require "mcabber.themes.modern").  Available themes: modern,
+        classic (the original look), and the color themes of the original
+        mcabber: colorcli, light, light2, mikael-256, oliver.  A theme is a
+        Lua table of styles, with 'options' and 'format' sections and an
+        optional 'setup' function (see STYLES AND THEMES); it can be written
+        in <config dir>/lua/.
 
 STYLES AND THEMES
 -----------------
@@ -837,9 +846,10 @@ mc.theme(t) sets the styles of the table t; its optional 'options' and
 
 KEY NAMES
 ---------
-A key combination is written "Modifier+...+Key".  Modifiers are 'Ctrl' (or
-'C'), 'Alt' (or 'Meta', 'M') and 'Shift' (or 'S'); '-' can be used instead of
-'+'.  Names are not case-sensitive, except single characters.
+A key combination is written with modifiers joined to the key by plus
+signs, like "Ctrl+Alt+Left".  Modifiers are Ctrl (or C), Alt (or Meta, M)
+and Shift (or S); a minus sign can be used instead of the plus sign
+("M-j").  Names are not case-sensitive, except single characters.
 
 Named keys are: Enter, Tab, Backspace, Esc, Space, Up, Down, Left, Right,
 Home, End, PgUp, PgDn, Ins, Del, Begin, F1 to F63, WheelUp, WheelDown.  Any
