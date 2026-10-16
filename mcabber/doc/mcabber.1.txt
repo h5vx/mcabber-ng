@@ -764,6 +764,37 @@ The default format is:
       info = "{time:%H:%M}            * ",
     }
 
+STYLES AND THEMES
+-----------------
+Colors and text attributes are defined by styles:
+
+    mc.style("msgin", "fg=#c0caf5 bg=default")
+    mc.style("timestamp", { fg = "#565f89", italic = true })
+    mc.theme { general = "white", status = "black on cyan bold", ... }
+
+A style is a string of words: a foreground color, "on" and a background
+color, "fg=COLOR", "bg=COLOR", and attributes (bold, dim, italic,
+underline, reverse, blink, standout); or a table with the 'fg' and 'bg'
+fields and boolean attributes.  Colors are default, black, red, green,
+yellow, blue, magenta, cyan, white (optionally prefixed by "bright"), a
+palette number (0-255) or "#rrggbb".  Colors are approximated when the
+terminal has less colors.  24-bit colors are used if the terminal supports
+them (e.g. TERM=xterm-direct); the 'ui_colors' option ("auto", "8", "16",
+"256" or "truecolor") overrides the detection.
+
+The styles of the interface are: general, msgin, msgout, msghl, info,
+timestamp, readmark, status (status lines), log, roster, rostersel
+(selected item), rosterselmsg, rosternewmsg, border, title, title_active,
+roster_group, roster_unread, status_online, status_free, status_away,
+status_notavail, status_dnd, status_invisible, status_offline, badge,
+nick_self, input, input_prompt.  The "background", "bgstatus" and
+"bgrostersel" entries are background colors.  Any other name can be
+defined and used in formats ({#name}).  The old color_* options still
+work for the first ones.
+
+mc.theme(t) sets the styles of the table t; its optional 'options' and
+'format' fields are passed to mc.set and mc.format.
+
 KEY NAMES
 ---------
 A key combination is written "Modifier+...+Key".  Modifiers are 'Ctrl' (or

@@ -4,7 +4,8 @@ bin_PROGRAMS = mcabber-ng
 # It is linked into the program and into the unit tests (see ../tests).
 noinst_LIBRARIES = libmcpure.a
 libmcpure_a_SOURCES = utf8.c utf8.h keys.c keys.h layout.c layout.h \
-		      inputlayout.c inputlayout.h paste.c paste.h fmt.c fmt.h
+		      inputlayout.c inputlayout.h paste.c paste.h fmt.c fmt.h \
+		      style.c style.h
 
 mcabber_ng_SOURCES = main.c main.h roster.c roster.h events.c events.h \
 		  commands.c commands.h compl.c compl.h \

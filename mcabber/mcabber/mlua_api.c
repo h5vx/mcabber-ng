@@ -435,6 +435,23 @@ static int l_cancel(lua_State *L)
 
 /* -- Internal helpers for the prelude -- */
 
+// mc._style(name, spec): set a style of the theme
+static int l_style(lua_State *L)
+{
+  const char *name = luaL_checkstring(L, 1);
+  const char *spec = luaL_optstring(L, 2, NULL);
+  GError *err = NULL;
+
+  if (!scr_set_style(name, spec, &err)) {
+    luaL_where(L, 2);
+    lua_pushfstring(L, "style \"%s\": %s", name, err->message);
+    g_error_free(err);
+    lua_concat(L, 2);
+    return lua_error(L);
+  }
+  return 0;
+}
+
 // mc._format_changed(): the formats have been modified
 static int l_format_changed(lua_State *L)
 {
@@ -623,6 +640,7 @@ static const luaL_Reg mc_functions[] = {
   { "send",     l_send     },
   { "say",      l_say      },
   { "_report",  l_report   },
+  { "_style",   l_style    },
   { "_format_changed", l_format_changed },
   { "_hook",    l_hook     },
   { NULL,       NULL       }

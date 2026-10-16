@@ -102,6 +102,7 @@ void scr_getch(keycode_t *kcode);
 void scr_process_key(keycode_t kcode);
 void scr_process_input(void);
 void scr_format_changed(void);
+gboolean scr_set_style(const char *name, const char *spec, GError **err);
 const char *scr_get_inputline(void);
 void scr_set_inputline(const char *text);
 void scr_insert_inputline(const char *text);

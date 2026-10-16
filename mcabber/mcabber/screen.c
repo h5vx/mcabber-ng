@@ -61,6 +61,7 @@
 #include "inputlayout.h"
 #include "paste.h"
 #include "msgformat.h"
+#include "style.h"
 #include "utils.h"
 #include "xmpp.h"
 #include "main.h"
@@ -68,7 +69,6 @@
 int COLOR_ATTRIB[COLOR_max];
 
 #define get_color(col)      (COLOR_PAIR(col)|COLOR_ATTRIB[col])
-#define compose_color(col)  (COLOR_PAIR(col->color_pair)|col->color_attrib)
 
 #define DEFAULT_LOG_WIN_HEIGHT (5)
 #define DEFAULT_ROSTER_WIDTH    24
@@ -215,10 +215,17 @@ typedef struct {
 GSList* spell_checkers = NULL;
 #endif
 
+// User colors (roster rules, nick colors): a style, or an internal color
 typedef struct {
-  int color_pair;
+  int color_pair;       // Internal color (COLOR_*), if !has_spec
   int color_attrib;
+  gboolean has_spec;
+  style_spec_t spec;
+  guint gen;            // Color generation of "cached"
+  int cached;
 } ccolor_t;
+
+static int compose_color(ccolor_t *col);
 
 typedef struct {
   char *status, *wildcard;
@@ -241,68 +248,287 @@ static muccol_t glob_muccol = MC_OFF;
 
 /* Functions */
 
-static int find_color(const char *name)
+/* -- Colors and styles -- */
+
+#ifdef HAVE_TIGETFLAG
+// From <term.h>, which can't be included here (it defines "lines"...)
+extern int tigetflag(const char *capname);
+#endif
+
+static gboolean colors_started;  // start_color() has been called
+static int color_depth = 8;     // 8, 16, 256 or 0x1000000 (direct color)
+static GHashTable *pair_cache;  // "fg:bg" -> color pair
+static int next_pair;
+static guint color_gen = 1;     // Incremented when colors are reset
+static GHashTable *theme;       // Style name -> specification (mc.style)
+static GHashTable *style_cache; // Style name -> attributes (int)
+static int general_fg = COLOR_WHITE, general_bg = COLOR_BLACK;
+
+static void detect_color_depth(void)
 {
-  int result;
+  const char *opt = settings_opt_get("ui_colors");
 
-  if (!strcmp(name, "default"))
-    return -1;
-  if (!strcmp(name, "black"))
-    return COLOR_BLACK;
-  if (!strcmp(name, "red"))
-    return COLOR_RED;
-  if (!strcmp(name, "green"))
-    return COLOR_GREEN;
-  if (!strcmp(name, "yellow"))
-    return COLOR_YELLOW;
-  if (!strcmp(name, "blue"))
-    return COLOR_BLUE;
-  if (!strcmp(name, "magenta"))
-    return COLOR_MAGENTA;
-  if (!strcmp(name, "cyan"))
-    return COLOR_CYAN;
-  if (!strcmp(name, "white"))
-    return COLOR_WHITE;
-
-  // Directly support 256-color values
-  result = atoi(name);
-  if (result > 0 && (result < COLORS || !Curses))
-    return result;
-
-  scr_LogPrint(LPRINT_LOGNORM, "ERROR: Wrong color: %s", name);
-  return -1;
+  color_depth = COLORS;
+#ifdef HAVE_TIGETFLAG
+  if (COLORS > 256 && tigetflag("RGB") > 0)
+    color_depth = 0x1000000;
+#endif
+  if (COLORS >= 0x1000000)
+    color_depth = 0x1000000;
+  if (opt && *opt && g_ascii_strcasecmp(opt, "auto")) {
+    if (!g_ascii_strcasecmp(opt, "truecolor"))
+      color_depth = 0x1000000;
+    else if (atoi(opt) > 0)
+      color_depth = MIN(atoi(opt), color_depth);
+  }
+  if (color_depth > 256 && color_depth < 0x1000000)
+    color_depth = 256;
 }
 
-//  user_color_count()
-// Number of colors that can be used as user colors (each needs a pair).
-static int user_color_count(void)
+//  resolve_color(color, &attrs)
+// Terminal color number for a style color, -1 for the default color and
+// -2 if the color is not set.  Colors that the terminal doesn't have are
+// approximated (A_BOLD is added to attrs for bright colors on 8-color
+// terminals).
+static int resolve_color(const style_color_t *c, int *attrs)
 {
-  int n = MIN(COLORS, 256);
-  if (COLOR_PAIRS > 0)
-    n = MIN(n, COLOR_PAIRS - COLOR_max);
-  return MAX(n, 0);
+  guint32 rgb;
+
+  switch (c->kind) {
+    case STYLE_COLOR_UNSET:
+        return -2;
+    case STYLE_COLOR_DEFAULT:
+        return -1;
+    case STYLE_COLOR_INDEX:
+        if (c->value < 8 ||
+            (color_depth <= 256 && c->value < (guint)color_depth))
+          return c->value;
+        if (c->value < 16 && color_depth < 16) {
+          if (attrs)
+            *attrs |= A_BOLD;
+          return c->value - 8;
+        }
+        rgb = style_palette_rgb(c->value);
+        break;
+    default:
+        rgb = c->value;
+  }
+  if (color_depth >= 0x1000000)
+    return rgb < 8 ? 0 : (int)rgb;  // Values < 8 are palette colors
+  if (color_depth >= 256)
+    return style_rgb_to_256(rgb);
+  {
+    int n = style_rgb_to_16(rgb);
+    if (n >= 8 && color_depth < 16) {
+      if (attrs)
+        *attrs |= A_BOLD;
+      n -= 8;
+    }
+    return n;
+  }
+}
+
+static void reset_pairs(void)
+{
+  if (pair_cache)
+    g_hash_table_remove_all(pair_cache);
+  else
+    pair_cache = g_hash_table_new_full(g_str_hash, g_str_equal, g_free, NULL);
+  if (style_cache)
+    g_hash_table_remove_all(style_cache);
+  else
+    style_cache = g_hash_table_new_full(g_str_hash, g_str_equal, g_free, NULL);
+  next_pair = COLOR_max;
+  color_gen++;
+}
+
+static void set_pair(int pair, int fg, int bg)
+{
+#ifdef HAVE_INIT_EXTENDED_PAIR
+  init_extended_pair(pair, fg, bg);
+#else
+  init_pair(pair, fg, bg);
+#endif
+}
+
+//  ui_pair(fg, bg)
+// Get a color pair (allocated when needed).
+static int ui_pair(int fg, int bg)
+{
+  static gboolean warned;
+  int max_pair = MIN(COLOR_PAIRS - 1, 255);
+  gchar *key;
+  gpointer p;
+
+  if (!colors_started)
+    return 0;
+  if (!pair_cache)
+    reset_pairs();
+  key = g_strdup_printf("%d:%d", fg, bg);
+  if (g_hash_table_lookup_extended(pair_cache, key, NULL, &p)) {
+    g_free(key);
+    return GPOINTER_TO_INT(p);
+  }
+  if (next_pair > max_pair) {
+    if (!warned)
+      scr_LogPrint(LPRINT_LOGNORM, "Too many colors are used.");
+    warned = TRUE;
+    g_free(key);
+    return 0;
+  }
+  set_pair(next_pair, fg, bg);
+  g_hash_table_insert(pair_cache, key, GINT_TO_POINTER(next_pair));
+  return next_pair++;
+}
+
+static int style_attrs(guint a)
+{
+  int attrs = 0;
+  if (a & STYLE_BOLD)      attrs |= A_BOLD;
+  if (a & STYLE_DIM)       attrs |= A_DIM;
+#ifdef A_ITALIC
+  if (a & STYLE_ITALIC)    attrs |= A_ITALIC;
+#endif
+  if (a & STYLE_UNDERLINE) attrs |= A_UNDERLINE;
+  if (a & STYLE_REVERSE)   attrs |= A_REVERSE;
+  if (a & STYLE_BLINK)     attrs |= A_BLINK;
+  if (a & STYLE_STANDOUT)  attrs |= A_STANDOUT;
+  return attrs;
+}
+
+//  spec_attr(spec, def_fg, def_bg)
+// Attributes (color pair included) for a style specification.
+static int spec_attr(const style_spec_t *spec, int def_fg, int def_bg)
+{
+  int attrs = style_attrs(spec->attrs);
+  int fg = resolve_color(&spec->fg, &attrs);
+  int bg = resolve_color(&spec->bg, NULL);
+  if (fg == -2) fg = def_fg;
+  if (bg == -2) bg = def_bg;
+  return COLOR_PAIR(ui_pair(fg, bg)) | attrs;
+}
+
+//  legacy_color(name, &attrs)
+// Colors of the color_* options: "bright" means bold.
+static int legacy_color(const char *name, int *attrs)
+{
+  style_color_t c;
+
+  if (!strncmp(name, "bright", 6)) {
+    if (attrs)
+      *attrs |= A_BOLD;
+    name += 6;
+  }
+  if (!style_parse_color(name, &c, NULL)) {
+    scr_LogPrint(LPRINT_LOGNORM, "ERROR: Wrong color: %s", name);
+    return -1;
+  }
+  return resolve_color(&c, NULL);
 }
 
 static ccolor_t *get_user_color(const char *color)
 {
-  bool isbright = FALSE;
-  int cl;
   ccolor_t *ccol;
-  if (!strncmp(color, "bright", 6)) {
-    isbright = TRUE;
-    color += 6;
-  }
-  cl = find_color(color);
-  if (cl < 0)
-    return NULL;
-  if (Curses && cl >= user_color_count()) {
-    scr_LogPrint(LPRINT_LOGNORM, "ERROR: Color out of range: %s", color);
+  style_spec_t spec;
+  GError *err = NULL;
+
+  if (!style_parse(color, &spec, &err)) {
+    scr_LogPrint(LPRINT_LOGNORM, "ERROR: Wrong color: %s (%s)", color,
+                 err->message);
+    g_error_free(err);
     return NULL;
   }
   ccol = g_new0(ccolor_t, 1);
-  ccol->color_attrib = isbright ? A_BOLD : A_NORMAL;
-  ccol->color_pair = cl + COLOR_max; // User colors come after the internal ones
+  ccol->has_spec = TRUE;
+  ccol->spec = spec;
   return ccol;
+}
+
+static int compose_color(ccolor_t *col)
+{
+  if (!col->has_spec)
+    return COLOR_PAIR(col->color_pair) | col->color_attrib;
+  if (col->gen != color_gen) {
+    col->cached = spec_attr(&col->spec, general_fg, general_bg);
+    col->gen = color_gen;
+  }
+  return col->cached;
+}
+
+//  scr_set_style(name, spec)
+// Set a style of the theme (mc.style).  Returns FALSE (and sets err) if
+// the specification is invalid.
+gboolean scr_set_style(const char *name, const char *spec, GError **err)
+{
+  if (!theme)
+    theme = g_hash_table_new_full(g_str_hash, g_str_equal, g_free, g_free);
+  if (!spec) {
+    g_hash_table_remove(theme, name);
+  } else {
+    style_spec_t st;
+    if (!style_parse(spec, &st, err))
+      return FALSE;
+    g_hash_table_insert(theme, g_strdup(name), g_strdup(spec));
+  }
+  colors_stalled = TRUE;
+  return TRUE;
+}
+
+static const char *theme_spec(const char *name)
+{
+  return theme ? g_hash_table_lookup(theme, name) : NULL;
+}
+
+// Default specifications of the styles that are not internal colors
+static const struct {
+  const char *name, *spec;
+} default_styles[] = {
+  { "border",           "dim" },
+  { "title",            "bold" },
+  { "title_active",     "bold" },
+  { "nick_self",        "cyan" },
+  { "badge",            "reverse" },
+  { "roster_group",     "bold" },
+  { "roster_unread",    "red" },
+  { "status_online",    "green" },
+  { "status_free",      "brightgreen" },
+  { "status_away",      "yellow" },
+  { "status_notavail",  "magenta" },
+  { "status_dnd",       "red" },
+  { "status_invisible", "dim" },
+  { "status_offline",   "dim" },
+  { "input",            "" },
+  { "input_prompt",     "bold" },
+  { NULL, NULL }
+};
+
+//  custom_style_attr(name, &attr)
+// Attributes of a style that is not an internal color.
+static gboolean custom_style_attr(const char *name, int *attr)
+{
+  const char *spec = theme_spec(name);
+  gpointer cached;
+  style_spec_t st;
+  int i;
+
+  if (!style_cache)
+    reset_pairs();
+  if (g_hash_table_lookup_extended(style_cache, name, NULL, &cached)) {
+    *attr = GPOINTER_TO_INT(cached);
+    return TRUE;
+  }
+  if (!spec) {
+    for (i = 0; default_styles[i].name; i++)
+      if (!strcmp(default_styles[i].name, name)) {
+        spec = default_styles[i].spec;
+        break;
+      }
+  }
+  if (!spec || !style_parse(spec, &st, NULL))
+    return FALSE;
+  *attr = spec_attr(&st, general_fg, general_bg);
+  g_hash_table_insert(style_cache, g_strdup(name), GINT_TO_POINTER(*attr));
+  return TRUE;
 }
 
 static void ensure_string_htable(GHashTable **table,
@@ -465,118 +691,94 @@ bool scr_roster_color(const char *status, const char *wildcard,
   }
 }
 
+//  parse_colors()
+// Initialize the internal colors from the theme (mc.style) and the color_*
+// options.
 static void parse_colors(void)
 {
-  const char *colors[] = {
-    "", "",
-    "general",
-    "msgout",
-    "msghl",
-    "status",
-    "log",
-    "roster",
-    "rostersel",
-    "rosterselmsg",
-    "rosternewmsg",
-    "info",
-    "msgin",
-    "readmark",
-    "timestamp",
-    NULL
+  static const struct {
+    int color;
+    const char *name;
+    int def_fg;
+    const char *bg_option;
+  } colors[] = {
+    { COLOR_GENERAL,       "general",      COLOR_WHITE,  "background" },
+    { COLOR_MSGOUT,        "msgout",       COLOR_CYAN,   "background" },
+    { COLOR_MSGHL,         "msghl",        COLOR_YELLOW, "background" },
+    { COLOR_STATUS,        "status",       COLOR_WHITE,  "bgstatus" },
+    { COLOR_LOG,           "log",          COLOR_WHITE,  "background" },
+    { COLOR_ROSTER,        "roster",       COLOR_GREEN,  "background" },
+    { COLOR_ROSTERSEL,     "rostersel",    COLOR_BLUE,   "bgrostersel" },
+    { COLOR_ROSTERSELNMSG, "rosterselmsg", COLOR_RED,    "bgrostersel" },
+    { COLOR_ROSTERNMSG,    "rosternewmsg", COLOR_RED,    "background" },
+    { COLOR_INFO,          "info",         COLOR_WHITE,  "background" },
+    { COLOR_MSGIN,         "msgin",        COLOR_WHITE,  "background" },
+    { COLOR_READMARK,      "readmark",     COLOR_RED,    "background" },
+    { COLOR_TIMESTAMP,     "timestamp",    COLOR_WHITE,  "background" },
   };
+  static const char *bg_defaults[][2] = {
+    { "background",  "black" },
+    { "bgstatus",    "blue" },
+    { "bgrostersel", "cyan" },
+  };
+  int bgs[3];
+  guint i;
 
-  const char *color;
-  const char *background   = settings_opt_get("color_background");
-  const char *backselected = settings_opt_get("color_bgrostersel");
-  const char *backstatus   = settings_opt_get("color_bgstatus");
-  char *tmp;
-  int i;
+  if (!colors_started)
+    return;
 
-  // Initialize color attributes
+  detect_color_depth();
+  reset_pairs();
   memset(COLOR_ATTRIB, 0, sizeof(COLOR_ATTRIB));
 
-  // Default values
-  if (!background)   background   = "black";
-  if (!backselected) backselected = "cyan";
-  if (!backstatus)   backstatus   = "blue";
+  // Background colors: theme ("background", "bgstatus", "bgrostersel"),
+  // or color_* options
+  for (i = 0; i < 3; i++) {
+    const char *spec = theme_spec(bg_defaults[i][0]);
+    gchar *opt = g_strdup_printf("color_%s", bg_defaults[i][0]);
+    const char *v = settings_opt_get(opt);
+    style_color_t c;
+    g_free(opt);
+    if (spec && style_parse_color(spec, &c, NULL))
+      bgs[i] = resolve_color(&c, NULL);
+    else
+      bgs[i] = legacy_color(v ? v : bg_defaults[i][1], NULL);
+  }
 
-  for (i=0; colors[i]; i++) {
-    tmp = g_strdup_printf("color_%s", colors[i]);
-    color = settings_opt_get(tmp);
-    g_free(tmp);
+  init_pair(1, COLOR_BLACK, COLOR_WHITE);
+  init_pair(2, COLOR_WHITE, COLOR_BLACK);
 
-    if (color) {
-      if (!strncmp(color, "bright", 6)) {
-        COLOR_ATTRIB[i+1] = A_BOLD;
-        color += 6;
-      }
+  for (i = 0; i < G_N_ELEMENTS(colors); i++) {
+    const char *spec = theme_spec(colors[i].name);
+    int bg = bgs[0], fg = colors[i].def_fg, attrs = 0;
+    style_spec_t st;
+
+    if (!strcmp(colors[i].bg_option, "bgstatus"))
+      bg = bgs[1];
+    else if (!strcmp(colors[i].bg_option, "bgrostersel"))
+      bg = bgs[2];
+
+    if (spec && style_parse(spec, &st, NULL)) {
+      int c;
+      attrs = style_attrs(st.attrs);
+      c = resolve_color(&st.fg, &attrs);
+      if (c != -2) fg = c;
+      c = resolve_color(&st.bg, NULL);
+      if (c != -2) bg = c;
+    } else {
+      gchar *opt = g_strdup_printf("color_%s", colors[i].name);
+      const char *v = settings_opt_get(opt);
+      g_free(opt);
+      if (v)
+        fg = legacy_color(v, &attrs);
     }
-
-    switch (i + 1) {
-      case 1:
-          init_pair(1, COLOR_BLACK, COLOR_WHITE);
-          break;
-      case 2:
-          init_pair(2, COLOR_WHITE, COLOR_BLACK);
-          break;
-      case COLOR_GENERAL:
-          init_pair(i+1, ((color) ? find_color(color) : COLOR_WHITE),
-                    find_color(background));
-          break;
-      case COLOR_MSGOUT:
-          init_pair(i+1, ((color) ? find_color(color) : COLOR_CYAN),
-                    find_color(background));
-          break;
-      case COLOR_MSGHL:
-          init_pair(i+1, ((color) ? find_color(color) : COLOR_YELLOW),
-                    find_color(background));
-          break;
-      case COLOR_STATUS:
-          init_pair(i+1, ((color) ? find_color(color) : COLOR_WHITE),
-                    find_color(backstatus));
-          break;
-      case COLOR_LOG:
-          init_pair(i+1, ((color) ? find_color(color) : COLOR_WHITE),
-                    find_color(background));
-          break;
-      case COLOR_ROSTER:
-          init_pair(i+1, ((color) ? find_color(color) : COLOR_GREEN),
-                    find_color(background));
-          break;
-      case COLOR_ROSTERSEL:
-          init_pair(i+1, ((color) ? find_color(color) : COLOR_BLUE),
-                    find_color(backselected));
-          break;
-      case COLOR_ROSTERSELNMSG:
-          init_pair(i+1, ((color) ? find_color(color) : COLOR_RED),
-                    find_color(backselected));
-          break;
-      case COLOR_ROSTERNMSG:
-          init_pair(i+1, ((color) ? find_color(color) : COLOR_RED),
-                    find_color(background));
-          break;
-      case COLOR_INFO:
-          init_pair(i+1, ((color) ? find_color(color) : COLOR_WHITE),
-                    find_color(background));
-          break;
-      case COLOR_MSGIN:
-          init_pair(i+1, ((color) ? find_color(color) : COLOR_WHITE),
-                    find_color(background));
-          break;
-      case COLOR_READMARK:
-          init_pair(i+1, ((color) ? find_color(color) : COLOR_RED),
-                    find_color(background));
-          break;
-      case COLOR_TIMESTAMP:
-          init_pair(i+1, ((color) ? find_color(color) : COLOR_WHITE),
-                    find_color(background));
-          break;
+    set_pair(colors[i].color, fg, bg);
+    COLOR_ATTRIB[colors[i].color] = attrs;
+    if (colors[i].color == COLOR_GENERAL) {
+      general_fg = fg;
+      general_bg = bg;
     }
   }
-  // On direct-color terminals COLORS can be 2^24: only the first
-  // 256 colors get a pair.
-  for (i = COLOR_max; i < COLOR_max + user_color_count(); i++)
-    init_pair(i, i-COLOR_max, find_color(background));
 
   if (!nickcols) {
     char *ncolors = g_strdup(settings_opt_get("nick_colors"));
@@ -610,8 +812,8 @@ static void parse_colors(void)
     }
     if (!nickcols) { // Fallback to have something
       nickcolcount = 1;
-      nickcols = g_new(ccolor_t*, 1);
-      *nickcols = g_new(ccolor_t, 1);
+      nickcols = g_new0(ccolor_t*, 1);
+      *nickcols = g_new0(ccolor_t, 1);
       (*nickcols)->color_pair = COLOR_GENERAL;
       (*nickcols)->color_attrib = A_NORMAL;
     }
@@ -848,6 +1050,7 @@ void scr_init_curses(void)
   intrflush(stdscr, FALSE);
   start_color();
   use_default_colors();
+  colors_started = TRUE;
   bracketed_paste_enable();
 #ifdef NCURSES_MOUSE_VERSION
   if (settings_opt_get_int("use_mouse"))
@@ -1200,6 +1403,8 @@ static int style_attr(const char *style, int line_color, const char *nick,
   for (i = 0; styles[i].name; i++)
     if (!strcmp(style, styles[i].name))
       return get_color(styles[i].color);
+  if (custom_style_attr(style, &attr))
+    return attr;
   return get_color(line_color);
 }
 
@@ -4224,8 +4429,10 @@ static void refresh_inputline(void)
     wmove(inputWnd, r, 0);
     while (p < end) {
       char *next = next_char(p);
+#if defined(WITH_ENCHANT) || defined(WITH_ASPELL)
       if (spell && maskLine[p - inputLine])
         wattrset(inputWnd, A_UNDERLINE);
+#endif
       if ((unsigned char)*p < ' ')
         waddch(inputWnd, '?' | A_REVERSE);  // Control character
       else

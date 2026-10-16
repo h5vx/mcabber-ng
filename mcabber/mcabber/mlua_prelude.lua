@@ -173,6 +173,31 @@ local function emit(event, ev)
   return nil
 end
 
+-- Styles ------------------------------------------------------------------
+
+-- A style is a string ("fg=#c0caf5 bg=default bold", "white on blue") or a
+-- table ({ fg = "#c0caf5", bold = true }).
+local attributes = { "bold", "dim", "italic", "underline", "reverse",
+                     "blink", "standout" }
+
+local function style_spec(v)
+  if type(v) ~= "table" then
+    return v
+  end
+  local parts = {}
+  if v.fg then parts[#parts + 1] = "fg=" .. v.fg end
+  if v.bg then parts[#parts + 1] = "bg=" .. v.bg end
+  for _, a in ipairs(attributes) do
+    if v[a] then parts[#parts + 1] = a end
+  end
+  return table.concat(parts, " ")
+end
+
+-- mc.style(name, style): set a style (nil restores the default)
+function mc.style(name, spec)
+  return mc._style(name, style_spec(spec))
+end
+
 -- Formats -----------------------------------------------------------------
 
 -- mc.format.message: template, table of templates per kind of message
@@ -195,5 +220,25 @@ mc.format = setmetatable({}, {
     mc._format_changed()
   end,
 })
+
+-- Themes ------------------------------------------------------------------
+
+-- mc.theme(t) applies a theme: a table of styles, with optional sections:
+--   options = { ... }   (see mc.set), format = { ... } (see mc.format)
+function mc.theme(t)
+  for k, v in pairs(t) do
+    if k == "options" then
+      mc.set(v)
+    elseif k == "format" then
+      for fk, fv in pairs(v) do
+        mc.format[fk] = fv
+      end
+    elseif k == "name" then
+      -- Informative only
+    else
+      mc.style(k, v)
+    end
+  end
+end
 
 return handlers, emit, format_values
