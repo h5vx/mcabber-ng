@@ -4,7 +4,7 @@ bin_PROGRAMS = mcabber-ng
 # It is linked into the program and into the unit tests (see ../tests).
 noinst_LIBRARIES = libmcpure.a
 libmcpure_a_SOURCES = utf8.c utf8.h keys.c keys.h layout.c layout.h \
-		      inputlayout.c inputlayout.h paste.c paste.h
+		      inputlayout.c inputlayout.h paste.c paste.h fmt.c fmt.h
 
 mcabber_ng_SOURCES = main.c main.h roster.c roster.h events.c events.h \
 		  commands.c commands.h compl.c compl.h \
@@ -15,7 +15,8 @@ mcabber_ng_SOURCES = main.c main.h roster.c roster.h events.c events.h \
 		  xmpp_iq.c xmpp_iq.h xmpp_iqrequest.c xmpp_iqrequest.h \
 		  xmpp_muc.c xmpp_muc.h xmpp_s10n.c xmpp_s10n.h \
 		  caps.c caps.h help.c help.h carbons.c carbons.h \
-		  mlua.c mlua.h mlua_compat.h mlua_api.c mlua_events.c
+		  mlua.c mlua.h mlua_compat.h mlua_api.c mlua_events.c \
+		  msgformat.c msgformat.h
 nodist_mcabber_ng_SOURCES = mlua_prelude.h
 EXTRA_DIST = mlua_prelude.lua
 
@@ -55,7 +56,7 @@ mcabber_ng_SOURCES += modules.c modules.h api.h
 mcabberinclude_HEADERS = main.h roster.h events.h \
 			 commands.h compl.h \
 			 hbuf.h screen.h logprint.h \
-			 settings.h hooks.h utf8.c utf8.h keys.h \
+			 settings.h hooks.h utf8.c utf8.h keys.h fmt.h msgformat.h \
 			 histolog.h utils.h pgp.h \
 			 xmpp.h xmpp_helper.h xmpp_defines.h \
 			 xmpp_iq.h xmpp_iqrequest.h \

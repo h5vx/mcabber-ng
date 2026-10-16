@@ -671,6 +671,15 @@ mc.bind {
 -- Sample alias to join mcabber channel with "/jmc"
 -- mc.alias("jmc", "room join mcabber@conf.lilotux.net")
 
+-- Message format
+-- The text displayed before messages can be changed with templates or Lua
+-- functions (see the MESSAGE FORMAT section of the manual page).
+-- mc.format.time = "%H:%M"
+-- mc.format.message = {
+--   default = "{time} {#nick}{nick:>10.10}{#} │ ",
+--   info    = "{time}          {mark} │ ",
+-- }
+
 -- Events
 -- Lua functions can be called when something happens (see the EVENTS
 -- section of the manual page).  For example:

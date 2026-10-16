@@ -91,10 +91,17 @@ void scr_write_incoming_message(const char *jidfrom, const char *text,
                                 unsigned mucnicklen);
 void scr_write_outgoing_message(const char *jidto,   const char *text,
                                 guint prefix, gpointer xep184);
+void scr_write_incoming_message_nick(const char *jidfrom, const char *text,
+                                     const char *nick, time_t timestamp,
+                                     guint prefix);
+void scr_write_outgoing_message_nick(const char *jidto, const char *text,
+                                     const char *nick, guint prefix,
+                                     gpointer xep184);
 
 void scr_getch(keycode_t *kcode);
 void scr_process_key(keycode_t kcode);
 void scr_process_input(void);
+void scr_format_changed(void);
 const char *scr_get_inputline(void);
 void scr_set_inputline(const char *text);
 void scr_insert_inputline(const char *text);
@@ -132,7 +139,6 @@ guint scr_getprefixwidth(void);
 guint scr_gettextwidth(void);
 guint scr_gettextheight(void);
 guint scr_getlogwinheight(void);
-size_t scr_line_prefix(hbb_line *line, char *prefix, guint preflen);
 
 void scr_beep(void);
 void scr_check_auto_away(int activity);

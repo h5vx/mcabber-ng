@@ -253,7 +253,8 @@ void mlua_init(void)
     lua_pop(L, 2);
   } else {
     lua_insert(L, -2);
-    if (!mlua_pcall(L, 1, 2, "prelude")) {
+    if (!mlua_pcall(L, 1, 3, "prelude")) {
+      lua_setfield(L, LUA_REGISTRYINDEX, "mcabber.format");
       lua_setfield(L, LUA_REGISTRYINDEX, "mcabber.emit");
       lua_setfield(L, LUA_REGISTRYINDEX, "mcabber.handlers");
     }

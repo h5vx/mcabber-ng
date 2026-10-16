@@ -173,4 +173,27 @@ local function emit(event, ev)
   return nil
 end
 
-return handlers, emit
+-- Formats -----------------------------------------------------------------
+
+-- mc.format.message: template, table of templates per kind of message
+--   ("in", "out", "info", "error", "special", "default") or function
+-- mc.format.time: default time format (strftime)
+-- mc.format.indent: indentation of the following lines of a message
+--   (default: aligned with the first line)
+-- Assigning a field redraws the buffers; after modifying a table in place,
+-- call mc.format.refresh().
+local format_values = {}
+mc.format = setmetatable({}, {
+  __index = function(_, k)
+    if k == "refresh" then
+      return mc._format_changed
+    end
+    return format_values[k]
+  end,
+  __newindex = function(_, k, v)
+    format_values[k] = v
+    mc._format_changed()
+  end,
+})
+
+return handlers, emit, format_values

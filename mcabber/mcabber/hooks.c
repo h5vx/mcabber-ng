@@ -252,7 +252,11 @@ static void hk_message_in_real(const char *bjid, const char *resname,
   guint rtype = ROSTER_TYPE_USER;
   char *wmsg = NULL, *bmsg = NULL, *mmsg = NULL;
   GSList *roster_usr;
-  unsigned mucnicklen = 0;
+  // What is displayed: the text, the nickname and some flags
+  const char *dtext = msg;
+  const char *dnick = NULL;
+  gchar *shortid = NULL;
+  guint dflags = 0;
   const char *ename = NULL;
   gboolean attention = FALSE, mucprivmsg = FALSE;
   gboolean error_msg_subtype = (type == LM_MESSAGE_SUB_TYPE_ERROR);
@@ -281,23 +285,30 @@ static void hk_message_in_real(const char *bjid, const char *resname,
       message_flags = HBB_PREFIX_INFO | HBB_PREFIX_NOFLAG;
       resname = "";
       wmsg = bmsg = g_strdup_printf("~ %s", msg);
+      dtext = wmsg;
     } else {
       wmsg = bmsg = g_strdup_printf("<%s> %s", resname, msg);
-      mucnicklen = strlen(resname) + 2;
-      if (!strncmp(msg, COMMAND_ME, strlen(COMMAND_ME)))
+      dnick = resname;
+      dflags |= HBB_PREFIX_MUC;
+      if (!strncmp(msg, COMMAND_ME, strlen(COMMAND_ME))) {
         wmsg = mmsg = g_strdup_printf("*%s %s", resname, msg+4);
+        dflags |= HBB_PREFIX_ME;
+        dtext = msg + 4;
+      }
     }
   } else {
     bmsg = g_strdup(msg);
+    shortid = g_strdup(bjid);
+    if (settings_opt_get_int("buddy_me_fulljid") == FALSE) {
+      gchar *p = strchr(shortid, '@'); // Truncate the jid
+      if (p)
+        *p = '\0';
+    }
+    dnick = shortid;
     if (!strncmp(msg, COMMAND_ME, strlen(COMMAND_ME))) {
-      gchar *shortid = g_strdup(bjid);
-      if (settings_opt_get_int("buddy_me_fulljid") == FALSE) {
-        gchar *p = strchr(shortid, '@'); // Truncate the jid
-        if (p)
-          *p = '\0';
-      }
       wmsg = mmsg = g_strdup_printf("*%s %s", shortid, msg+4);
-      g_free(shortid);
+      dflags |= HBB_PREFIX_ME;
+      dtext = msg + 4;
     } else
       wmsg = (char*) msg;
   }
@@ -320,6 +331,7 @@ static void hk_message_in_real(const char *bjid, const char *resname,
       scr_LogPrint(LPRINT_DEBUG, "Message dropped (hook result).");
       g_free(bmsg);
       g_free(mmsg);
+      g_free(shortid);
       return;
     }
   }
@@ -334,6 +346,7 @@ static void hk_message_in_real(const char *bjid, const char *resname,
       scr_LogPrint(LPRINT_LOGNORM, "ERROR: unable to add buddy!");
       g_free(bmsg);
       g_free(mmsg);
+      g_free(shortid);
       return;
     }
   } else if (is_groupchat) {
@@ -347,14 +360,21 @@ static void hk_message_in_real(const char *bjid, const char *resname,
     if (!is_groupchat) {
       // This is a private message from a room participant
       g_free(bmsg);
+      dtext = msg;
+      dnick = NULL;
+      dflags = 0;
       if (!resname) {
         resname = "";
         wmsg = bmsg = g_strdup(msg);
       } else {
         wmsg = bmsg = g_strdup_printf("PRIV#<%s> %s", resname, msg);
+        dnick = resname;
+        dflags |= HBB_PREFIX_PRIVATE;
         if (!strncmp(msg, COMMAND_ME, strlen(COMMAND_ME))) {
           g_free(mmsg);
           wmsg = mmsg = g_strdup_printf("PRIV#*%s %s", resname, msg+4);
+          dflags |= HBB_PREFIX_ME;
+          dtext = msg + 4;
         }
         mucprivmsg = TRUE;
       }
@@ -407,7 +427,8 @@ static void hk_message_in_real(const char *bjid, const char *resname,
   // Note: the hlog_write should not be called first, because in some
   // cases scr_write_incoming_message() will load the history and we'd
   // have the message twice...
-  scr_write_incoming_message(bjid, wmsg, timestamp, message_flags, mucnicklen);
+  scr_write_incoming_message_nick(bjid, dtext, dnick, timestamp,
+                                  message_flags | dflags);
 
   // Set urgent (a.k.a. "attention") flag
   {
@@ -532,6 +553,7 @@ static void hk_message_in_real(const char *bjid, const char *resname,
 
   g_free(bmsg);
   g_free(mmsg);
+  g_free(shortid);
 }
 
 //  hk_message_out()
@@ -543,22 +565,31 @@ void hk_message_out(const char *bjid, const char *nick,
 {
   char *wmsg = NULL, *bmsg = NULL, *mmsg = NULL;
   guint message_flags = 0;
+  // What is displayed: the text, the nickname and some flags
+  const char *dtext;
+  const char *dnick = nick;
+  char *myid = NULL;
 
   if (nick) {
+    // Private message in a room; nick is the recipient
     wmsg = bmsg = g_strdup_printf("PRIV#<%s> %s", nick, msg);
+    message_flags |= HBB_PREFIX_PRIVATE;
+    dtext = msg;
     if (!strncmp(msg, COMMAND_ME, strlen(COMMAND_ME))) {
       const char *mynick = roster_getnickname(bjid);
       wmsg = mmsg = g_strdup_printf("PRIV#<%s> *%s %s", nick,
                                     (mynick ? mynick : "me"), msg+4);
+      dtext = mmsg + strlen(nick) + 8;    // "*mynick text"
     }
   } else {
     wmsg = (char*)msg;
-    if (!strncmp(msg, COMMAND_ME, strlen(COMMAND_ME))) {
-      char *myid = jid_get_username(settings_opt_get("jid"));
-      if (myid) {
-        wmsg = mmsg = g_strdup_printf("*%s %s", myid, msg+4);
-        g_free(myid);
-      }
+    dtext = msg;
+    myid = jid_get_username(settings_opt_get("jid"));
+    dnick = myid;
+    if (!strncmp(msg, COMMAND_ME, strlen(COMMAND_ME)) && myid) {
+      wmsg = mmsg = g_strdup_printf("*%s %s", myid, msg+4);
+      message_flags |= HBB_PREFIX_ME;
+      dtext = msg + 4;
     }
   }
 
@@ -573,7 +604,7 @@ void hk_message_out(const char *bjid, const char *nick,
   if (carbon)
     message_flags |= HBB_PREFIX_CARBON | HBB_PREFIX_NOFLAG;
 
-  scr_write_outgoing_message(bjid, wmsg, message_flags, xep184);
+  scr_write_outgoing_message_nick(bjid, dtext, dnick, message_flags, xep184);
 
   // We don't log private messages
   if (!nick)
@@ -610,6 +641,7 @@ void hk_message_out(const char *bjid, const char *nick,
 
   g_free(bmsg);
   g_free(mmsg);
+  g_free(myid);
 }
 
 void hk_statuschange(const char *bjid, const char *resname, gchar prio,

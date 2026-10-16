@@ -711,6 +711,59 @@ within 'lua_timeout_ms' milliseconds (default 2000, 0 disables the check).
 The LuaJIT compiler is disabled because compiled code cannot be interrupted;
 call jit.on() in the configuration file to enable it.
 
+MESSAGE FORMAT
+--------------
+The text displayed before each message (the "head": time, direction mark,
+nickname...) can be changed with mc.format:
+
+mc.format.message::
+        A template for all messages, a table of templates per kind of
+        message ("in", "out", "info", "error", "special" for the status
+        window, "default"), or a Lua function (see below).
+
+mc.format.time::
+        The default time format (strftime(3) format), e.g. "%H:%M".  By
+        default it depends on the 'time_prefix' option.
+
+mc.format.indent::
+        Indentation of the following lines of a message (number of
+        columns).  By default they are aligned with the text of the first
+        line.
+
+Templates contain text and fields:
+
+    {field}          value of the field
+    {field:10}       padded to 10 columns ({field:>10} on the right,
+                     {field:^10} centered); {field:.10} truncated
+    {time:%H:%M}     time with a specific format
+    {?field}...{/}   text used only if the field is set ({!field}...{/}
+                     if it is not set)
+    {#style}         the following text uses this style (general, msgin,
+                     msgout, msghl, info, timestamp, readmark, status,
+                     roster, nick for the color of the nickname...); {#}
+                     returns to the color of the line
+    {{ and }}        braces
+
+Fields: time, mark (the original "<==", "-->", "***"...), nick (sender in
+rooms and for actions, contact or own username otherwise), kind, and the
+flags me (action, "/me"), muc, private (private message in a room),
+delayed, receipt (waiting for a receipt), carbon, highlight, own (your
+message in a room), pgp, otr, encrypted, in, out, info, error, special.
+
+The default format is:
+
+    {?delayed}{#timestamp}{/}{time}{#} {mark} {?private}PRIV#<{nick}> {/}
+    {?me}{#nick}*{nick}{#} {/}{?muc}{!me}{#nick}<{nick}>{#} {/}{/}
+
+(without the line break).  A Lua function receives a table with the fields
+(time is a number) and returns a string, a list of segments ("text" or
+{ "text", "style" }), or nil to use the default format.  Example:
+
+    mc.format.message = {
+      default = "{time:%H:%M} {#nick}{nick:>10.10}{#} | ",
+      info = "{time:%H:%M}            * ",
+    }
+
 KEY NAMES
 ---------
 A key combination is written "Modifier+...+Key".  Modifiers are 'Ctrl' (or

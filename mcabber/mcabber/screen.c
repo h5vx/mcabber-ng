@@ -60,6 +60,7 @@
 #include "layout.h"
 #include "inputlayout.h"
 #include "paste.h"
+#include "msgformat.h"
 #include "utils.h"
 #include "xmpp.h"
 #include "main.h"
@@ -186,13 +187,13 @@ GSList *keyseqlist;
 static void add_keyseq(char *seqstr, guint mods, gint key);
 
 static void scr_write_in_window(const char *winId, const char *text,
-                                time_t timestamp, unsigned int prefix_flags,
-                                int force_show, unsigned mucnicklen,
+                                const char *nick, time_t timestamp,
+                                unsigned int prefix_flags, int force_show,
                                 gpointer xep184);
 
 static void scr_write_message(const char *bjid, const char *text,
-                              time_t timestamp, guint prefix_flags,
-                              unsigned mucnicklen, gpointer xep184);
+                              const char *nick, time_t timestamp,
+                              guint prefix_flags, gpointer xep184);
 
 void scr_update_buddy_window(void);
 void scr_set_chatmode(int enable);
@@ -915,18 +916,6 @@ void scr_beep(void)
 }
 
 // This and following belongs to dynamic setting of time prefix
-static const char *timeprefixes[] = {
-  "%m-%d %H:%M ",
-  "%H:%M ",
-  " "
-};
-
-static const char *spectimeprefixes[] = {
-  "%m-%d %H:%M:%S   ",
-  "%H:%M:%S   ",
-  "   "
-};
-
 static int timepreflengths[] = {
   // (length of the corresponding timeprefix + 5)
   17,
@@ -934,28 +923,18 @@ static int timepreflengths[] = {
   6
 };
 
-static const char *gettprefix(void)
-{
-  guint n = settings_opt_get_int("time_prefix");
-  return timeprefixes[(n < 3 ? n : 0)];
-}
-
-static const char *getspectprefix(void)
-{
-  guint n = settings_opt_get_int("time_prefix");
-  return spectimeprefixes[(n < 3 ? n : 0)];
-}
-
 guint scr_getprefixwidth(void)
 {
   guint n = settings_opt_get_int("time_prefix");
   return timepreflengths[(n < 3 ? n : 0)];
 }
 
+//  scr_gettextwidth()
+// Width of the chat window (the text width depends on the head of each
+// message).
 guint scr_gettextwidth(void)
 {
-  int used_width = Roster_Width + scr_getprefixwidth();
-  return maxX > used_width ? maxX - used_width : 0;
+  return Layout.chat.w;
 }
 
 guint scr_gettextheight(void)
@@ -1036,13 +1015,13 @@ void scr_log_print(unsigned int flag, const char *fmt, ...)
     if (Curses) {
       wprintw(logWnd, "\n%s", buffer_locale);
       update_panels();
-      scr_write_in_window(NULL, buf_specialwindow, timestamp,
-                          HBB_PREFIX_SPECIAL, FALSE, 0, NULL);
+      scr_write_in_window(NULL, buf_specialwindow, NULL, timestamp,
+                          HBB_PREFIX_SPECIAL, FALSE, NULL);
     } else {
       printf("%s\n", buffer_locale);
       // ncurses are not initialized yet, so we call directly hbuf routine
-      hbuf_add_line(&statushbuf, buf_specialwindow, timestamp,
-        HBB_PREFIX_SPECIAL, 0, 0, 0, NULL);
+      hbuf_add_line(&statushbuf, buf_specialwindow, NULL, timestamp,
+        HBB_PREFIX_SPECIAL, 0, 0, NULL);
     }
 
     g_free(convbuf1);
@@ -1142,67 +1121,86 @@ static winbuf_t *scr_new_buddy(const char *title, int dont_show)
   return tmp;
 }
 
-//  scr_line_prefix(line, pref, preflen)
-// Use data from the hbb_line structure and write the prefix
-// to pref (not exceeding preflen, trailing null byte included).
-size_t scr_line_prefix(hbb_line *line, char *pref, guint preflen)
+//  nick_color(nick, flags, &attr)
+// Color of a nickname in a room (nick_colors option, /color mucnick and
+// /color muc).  Returns FALSE if the nickname is not colored.
+static gboolean nick_color(const char *nick, guint flags, int *attr)
 {
-  char date[64];
-  size_t timepreflen = 0;
+  char *mucjid, *key;
+  nickcolor_t *actual = NULL;
+  muccol_t type, *typetmp;
 
-  if (line->timestamp &&
-      !(line->flags & (HBB_PREFIX_SPECIAL|HBB_PREFIX_CONT))) {
-    timepreflen = strftime(date, 30, gettprefix(), localtime(&line->timestamp));
-  } else
-    strcpy(date, "           ");
+  if (!nick || !current_buddy)
+    return FALSE;
 
-  if (!(line->flags & HBB_PREFIX_CONT)) {
-    if (line->flags & HBB_PREFIX_INFO) {
-      char dir = '*';
-      if (line->flags & HBB_PREFIX_IN)
-        dir = '<';
-      else if (line->flags & HBB_PREFIX_OUT)
-        dir = '>';
-      g_snprintf(pref, preflen, "%s*%c* ", date, dir);
-    } else if (line->flags & HBB_PREFIX_ERR) {
-      char dir = '#';
-      if (line->flags & HBB_PREFIX_IN)
-        dir = '<';
-      else if (line->flags & HBB_PREFIX_OUT)
-        dir = '>';
-      g_snprintf(pref, preflen, "%s#%c# ", date, dir);
-    } else if (line->flags & HBB_PREFIX_IN) {
-      char cryptflag;
-      if (line->flags & HBB_PREFIX_PGPCRYPT)
-        cryptflag = '~';
-      else if (line->flags & HBB_PREFIX_OTRCRYPT)
-        cryptflag = 'O';
-      else
-        cryptflag = '=';
-      g_snprintf(pref, preflen, "%s<%c= ", date, cryptflag);
-    } else if (line->flags & HBB_PREFIX_OUT) {
-      char cryptflag, receiptflag;
-      if (line->flags & HBB_PREFIX_PGPCRYPT)
-        cryptflag = '~';
-      else if (line->flags & HBB_PREFIX_OTRCRYPT)
-        cryptflag = 'O';
-      else
-        cryptflag = '-';
-      if (line->flags & HBB_PREFIX_RECEIPT)
-        receiptflag = 'r';
-      else
-        receiptflag = '-';
-      g_snprintf(pref, preflen, "%s%c%c> ", date, receiptflag, cryptflag);
-    } else if (line->flags & HBB_PREFIX_SPECIAL) {
-      timepreflen = strftime(date, 30, getspectprefix(), localtime(&line->timestamp));
-      g_snprintf(pref, preflen, "%s   ", date);
-    } else {
-      g_snprintf(pref, preflen, "%s    ", date);
-    }
-  } else {
-    g_snprintf(pref, preflen, "                ");
+  type = glob_muccol;
+  mucjid = g_utf8_strdown(CURRENT_JID, -1);
+  if (muccolors) {
+    typetmp = g_hash_table_lookup(muccolors, mucjid);
+    if (typetmp)
+      type = *typetmp;
   }
-  return timepreflen;
+  g_free(mucjid);
+
+  // The nickname colors are stored with the "<nick>" and "*nick " keys
+  key = g_strdup_printf("<%s>", nick);
+  // Need to generate a color for the specified nick?
+  if ((type == MC_ALL) && (!nickcolors ||
+      !g_hash_table_lookup(nickcolors, key))) {
+    nickcolor_t *nc;
+    const char *p = key;
+    unsigned int nicksum = 0;
+    nc = g_new(nickcolor_t, 1);
+    ensure_string_htable(&nickcolors, NULL);
+    while (*p)
+      nicksum += *p++;
+    nc->color = nickcols[nicksum % nickcolcount];
+    nc->manual = FALSE;
+    g_hash_table_insert(nickcolors, g_strdup(key), nc);
+    g_hash_table_insert(nickcolors, g_strdup_printf("*%s ", nick), nc);
+  }
+  if (nickcolors)
+    actual = g_hash_table_lookup(nickcolors, key);
+  g_free(key);
+  if (actual && ((type == MC_ALL) || (actual->manual))
+      && (flags & HBB_PREFIX_IN) && !(flags & HBB_PREFIX_HLIGHT_OUT)) {
+    *attr = compose_color(actual->color);
+    return TRUE;
+  }
+  return FALSE;
+}
+
+//  style_attr(style, line_color, nick, flags)
+// Attributes for a style name used in a format.
+static int style_attr(const char *style, int line_color, const char *nick,
+                      guint flags)
+{
+  static const struct { const char *name; int color; } styles[] = {
+    { "general",      COLOR_GENERAL },
+    { "msgout",       COLOR_MSGOUT },
+    { "msghl",        COLOR_MSGHL },
+    { "status",       COLOR_STATUS },
+    { "log",          COLOR_LOG },
+    { "roster",       COLOR_ROSTER },
+    { "rostersel",    COLOR_ROSTERSEL },
+    { "rosterselmsg", COLOR_ROSTERSELNMSG },
+    { "rosternewmsg", COLOR_ROSTERNMSG },
+    { "info",         COLOR_INFO },
+    { "msgin",        COLOR_MSGIN },
+    { "readmark",     COLOR_READMARK },
+    { "timestamp",    COLOR_TIMESTAMP },
+    { NULL, 0 }
+  };
+  int i, attr;
+
+  if (!style)
+    return get_color(line_color);
+  if (!strcmp(style, "nick"))
+    return nick_color(nick, flags, &attr) ? attr : (int)get_color(line_color);
+  for (i = 0; styles[i].name; i++)
+    if (!strcmp(style, styles[i].name))
+      return get_color(styles[i].color);
+  return get_color(line_color);
 }
 
 //  scr_update_window()
@@ -1210,8 +1208,6 @@ size_t scr_line_prefix(hbb_line *line, char *pref, guint preflen)
 static void scr_update_window(winbuf_t *win_entry)
 {
   int n, mark_offset = 0;
-  guint prefixwidth;
-  char pref[96];
   hbb_line **lines, *line;
   GList *hbuf_head;
   int color = COLOR_GENERAL;
@@ -1220,9 +1216,6 @@ static void scr_update_window(winbuf_t *win_entry)
   int autolock;
 
   autolock = settings_opt_get_int("buffer_smart_scrolling");
-
-  prefixwidth = scr_getprefixwidth();
-  prefixwidth = MIN(prefixwidth, sizeof pref);
 
   // Should the window be empty?
   if (win_entry->bd->cleared) {
@@ -1280,7 +1273,6 @@ static void scr_update_window(winbuf_t *win_entry)
 
   // Display the lines
   for (n = 0 ; n < CHAT_WIN_HEIGHT; n++) {
-    int timelen;
     int winy = n + mark_offset;
     wmove(win_entry->win, winy, 0);
     line = *(lines+n);
@@ -1302,82 +1294,27 @@ static void scr_update_window(winbuf_t *win_entry)
       if (color != COLOR_GENERAL)
         wbkgdset(win_entry->win, get_color(color));
 
-      // Generate the prefix area and display it
-
-      timelen = scr_line_prefix(line, pref, prefixwidth);
-      if (timelen && line->flags & HBB_PREFIX_DELAYED) {
-        char tmp;
-
-        tmp = pref[timelen];
-        pref[timelen] = '\0';
-        wbkgdset(win_entry->win, get_color(COLOR_TIMESTAMP));
-        wprintw(win_entry->win, "%s", pref);
-        pref[timelen] = tmp;
-        wbkgdset(win_entry->win, get_color(color));
-        wprintw(win_entry->win, "%s", pref+timelen);
-      } else
-        wprintw(win_entry->win, "%s", pref);
-
-      // Make sure we are at the right position
-      wmove(win_entry->win, winy, prefixwidth-1);
-
-      // The MUC nick - overwrite with proper color
-      if (line->mucnicklen) {
-        char *mucjid;
-        char tmp;
-        nickcolor_t *actual = NULL;
-        muccol_t type, *typetmp;
-
-        // Store the char after the nick
-        tmp = line->text[line->mucnicklen];
-        type = glob_muccol;
-        // Terminate the string after the nick
-        line->text[line->mucnicklen] = '\0';
-        mucjid = g_utf8_strdown(CURRENT_JID, -1);
-        if (muccolors) {
-          typetmp = g_hash_table_lookup(muccolors, mucjid);
-          if (typetmp)
-            type = *typetmp;
+      // Display the head of the message (time, nickname...)
+      if (line->flags & HBB_PREFIX_CONT) {
+        wclrtoeol(win_entry->win);
+      } else {
+        sstr_t *head = sstr_new();
+        guint r;
+        msgfmt_head(line->timestamp, line->flags, line->nick, head);
+        for (r = 0; r < head->runs->len; r++) {
+          srun_t *run = &g_array_index(head->runs, srun_t, r);
+          wbkgdset(win_entry->win,
+                   style_attr(run->style, color, line->nick, line->flags));
+          waddnstr(win_entry->win, head->text->str + run->start, run->len);
         }
-        g_free(mucjid);
-        // Need to generate a color for the specified nick?
-        if ((type == MC_ALL) && (!nickcolors ||
-            !g_hash_table_lookup(nickcolors, line->text))) {
-          char *snick, *mnick;
-          nickcolor_t *nc;
-          const char *p = line->text;
-          unsigned int nicksum = 0;
-          snick = g_strdup(line->text);
-          mnick = g_strdup(line->text);
-          nc = g_new(nickcolor_t, 1);
-          ensure_string_htable(&nickcolors, NULL);
-          while (*p)
-            nicksum += *p++;
-          nc->color = nickcols[nicksum % nickcolcount];
-          nc->manual = FALSE;
-          *snick = '<';
-          snick[strlen(snick)-1] = '>';
-          *mnick = '*';
-          mnick[strlen(mnick)-1] = ' ';
-          // Insert them
-          g_hash_table_insert(nickcolors, snick, nc);
-          g_hash_table_insert(nickcolors, mnick, nc);
-        }
-        if (nickcolors)
-          actual = g_hash_table_lookup(nickcolors, line->text);
-        if (actual && ((type == MC_ALL) || (actual->manual))
-            && (line->flags & HBB_PREFIX_IN) &&
-           (!(line->flags & HBB_PREFIX_HLIGHT_OUT)))
-          wbkgdset(win_entry->win, compose_color(actual->color));
-        wprintw(win_entry->win, "%s", line->text);
-        // Return the char
-        line->text[line->mucnicklen] = tmp;
-        // Return the color back
         wbkgdset(win_entry->win, get_color(color));
+        sstr_free(head);
       }
 
       // Display text line
-      wprintw(win_entry->win, "%s", line->text+line->mucnicklen);
+      wmove(win_entry->win, winy,
+            (line->flags & HBB_PREFIX_CONT) ? line->contw : line->headw);
+      wprintw(win_entry->win, "%s", line->text);
       wclrtoeol(win_entry->win);
 
       // Restore default ("general") color
@@ -1394,9 +1331,8 @@ scr_update_window_skipline:
         winy = n + mark_offset;
         wmove(win_entry->win, winy, 0);
         wbkgdset(win_entry->win, get_color(COLOR_READMARK));
-        g_snprintf(pref, prefixwidth, "             == ");
-        wprintw(win_entry->win, "%s", pref);
-        w = scr_gettextwidth() / 3;
+        wprintw(win_entry->win, "             == ");
+        w = ((int)scr_gettextwidth() - 17) / 3;
         for (i=0; i<w; i++)
           wprintw(win_entry->win, "== ");
         wclrtoeol(win_entry->win);
@@ -1518,18 +1454,17 @@ void scr_update_buddy_window(void)
 // Lines are splitted when they are too long to fit in the chat window.
 // If this window doesn't exist, it is created.
 static void scr_write_in_window(const char *winId, const char *text,
-                                time_t timestamp, unsigned int prefix_flags,
-                                int force_show, unsigned mucnicklen,
+                                const char *nick, time_t timestamp,
+                                unsigned int prefix_flags, int force_show,
                                 gpointer xep184)
 {
   winbuf_t *win_entry;
-  char *text_locale;
+  char *text_locale, *nick_locale;
   int dont_show = FALSE;
   int special;
   guint num_history_blocks;
   bool setmsgflg = FALSE;
   bool clearmsgflg = FALSE;
-  char *nicktmp, *nicklocaltmp;
 
   // Look for the window entry.
   special = (winId == NULL);
@@ -1558,18 +1493,11 @@ static void scr_write_in_window(const char *winId, const char *text,
     num_history_blocks = get_max_history_blocks();
 
   text_locale = from_utf8(text);
-  // Convert the nick alone and compute its length
-  if (mucnicklen) {
-    nicktmp = g_strndup(text, mucnicklen);
-    nicklocaltmp = from_utf8(nicktmp);
-    if (nicklocaltmp)
-      mucnicklen = strlen(nicklocaltmp);
-    g_free(nicklocaltmp);
-    g_free(nicktmp);
-  }
-  hbuf_add_line(&win_entry->bd->hbuf, text_locale, timestamp, prefix_flags,
-                scr_gettextwidth(), num_history_blocks, mucnicklen, xep184);
+  nick_locale = from_utf8(nick);
+  hbuf_add_line(&win_entry->bd->hbuf, text_locale, nick_locale, timestamp,
+                prefix_flags, scr_gettextwidth(), num_history_blocks, xep184);
   g_free(text_locale);
+  g_free(nick_locale);
 
   if (win_entry->bd->cleared) {
     win_entry->bd->cleared = FALSE;
@@ -1821,7 +1749,7 @@ void scr_draw_main_window(unsigned int fullinit)
 
     // Init prev_chatwidth; this variable will be used to prevent us
     // from rewrapping buffers when the width doesn't change.
-    prev_chatwidth = maxX - Roster_Width - scr_getprefixwidth();
+    prev_chatwidth = Layout.chat.w;
     // Wrap existing status buffer lines
     hbuf_rebuild(&statushbuf, prev_chatwidth);
 
@@ -1870,7 +1798,7 @@ static void resize_win_buffer(gpointer key, gpointer value, gpointer data)
   // Redo line wrapping
   wbp->bd->top = hbuf_previous_persistent(wbp->bd->top);
 
-  new_chatwidth = maxX - Roster_Width - scr_getprefixwidth();
+  new_chatwidth = Layout.chat.w;
   if (new_chatwidth != prev_chatwidth)
     hbuf_rebuild(&wbp->bd->hbuf, new_chatwidth);
 }
@@ -1904,7 +1832,7 @@ void scr_resize(void)
     resize_win_buffer(NULL, statusWindow, &dim);
 
   // Update prev_chatwidth, now that all buffers have been resized
-  prev_chatwidth = maxX - Roster_Width - scr_getprefixwidth();
+  prev_chatwidth = Layout.chat.w;
 
   // Refresh current buddy window
   if (chatmode)
@@ -2355,8 +2283,8 @@ void scr_roster_visibility(int status)
 }
 
 static void scr_write_message(const char *bjid, const char *text,
-                              time_t timestamp, guint prefix_flags,
-                              unsigned mucnicklen, gpointer xep184)
+                              const char *nick, time_t timestamp,
+                              guint prefix_flags, gpointer xep184)
 {
   char *xtext;
 
@@ -2367,35 +2295,75 @@ static void scr_write_message(const char *bjid, const char *text,
 
   xtext = ut_expand_tabs(text); // Expand tabs and filter out some chars
 
-  scr_write_in_window(bjid, xtext, timestamp, prefix_flags, FALSE, mucnicklen,
+  scr_write_in_window(bjid, xtext, nick, timestamp, prefix_flags, FALSE,
                       xep184);
 
   if (xtext != (char*)text)
     g_free(xtext);
 }
 
+//  scr_write_incoming_message_nick(jidfrom, text, nick, timestamp, prefix)
+// Write an incoming message.  nick is the nickname of the sender, for room
+// messages (HBB_PREFIX_MUC) and actions (HBB_PREFIX_ME).
 // If prefix is NULL, HBB_PREFIX_IN is supposed.
+void scr_write_incoming_message_nick(const char *jidfrom, const char *text,
+                                     const char *nick, time_t timestamp,
+                                     guint prefix)
+{
+  if (!(prefix &
+        ~HBB_PREFIX_NOFLAG & ~HBB_PREFIX_HLIGHT & ~HBB_PREFIX_HLIGHT_OUT &
+        ~HBB_PREFIX_PGPCRYPT & ~HBB_PREFIX_OTRCRYPT & ~HBB_PREFIX_CARBON &
+        ~HBB_PREFIX_ME & ~HBB_PREFIX_MUC & ~HBB_PREFIX_PRIVATE))
+    prefix |= HBB_PREFIX_IN;
+
+  scr_write_message(jidfrom, text, nick, timestamp, prefix, NULL);
+}
+
+// For compatibility: if mucnicklen is not 0, the text begins with
+// "<nick> " (or "*nick " for an action).
 void scr_write_incoming_message(const char *jidfrom, const char *text,
                                 time_t timestamp,
                                 guint prefix, unsigned mucnicklen)
 {
-  if (!(prefix &
-        ~HBB_PREFIX_NOFLAG & ~HBB_PREFIX_HLIGHT & ~HBB_PREFIX_HLIGHT_OUT &
-        ~HBB_PREFIX_PGPCRYPT & ~HBB_PREFIX_OTRCRYPT & ~HBB_PREFIX_CARBON))
-    prefix |= HBB_PREFIX_IN;
+  gchar *nick = NULL;
 
-  scr_write_message(jidfrom, text, timestamp, prefix, mucnicklen, NULL);
+  if (mucnicklen > 2 && strlen(text) >= mucnicklen) {
+    if (text[0] == '<' && text[mucnicklen-1] == '>') {
+      nick = g_strndup(text + 1, mucnicklen - 2);
+      prefix |= HBB_PREFIX_MUC;
+    } else if (text[0] == '*' && text[mucnicklen-1] == ' ') {
+      nick = g_strndup(text + 1, mucnicklen - 2);
+      prefix |= HBB_PREFIX_MUC | HBB_PREFIX_ME;
+    }
+    if (nick) {
+      text += mucnicklen;
+      if (*text == ' ')
+        text++;
+    }
+  }
+  scr_write_incoming_message_nick(jidfrom, text, nick, timestamp, prefix);
+  g_free(nick);
 }
 
 void scr_write_outgoing_message(const char *jidto, const char *text,
                                 guint prefix, gpointer xep184)
 {
+  scr_write_outgoing_message_nick(jidto, text, NULL, prefix, xep184);
+}
+
+//  scr_write_outgoing_message_nick(jidto, text, nick, prefix, xep184)
+// nick is our nickname for actions (HBB_PREFIX_ME), or the recipient for
+// private messages in a room (HBB_PREFIX_PRIVATE).
+void scr_write_outgoing_message_nick(const char *jidto, const char *text,
+                                     const char *nick, guint prefix,
+                                     gpointer xep184)
+{
   GSList *roster_elt;
   roster_elt = roster_find(jidto, jidsearch,
                            ROSTER_TYPE_USER|ROSTER_TYPE_AGENT|ROSTER_TYPE_ROOM);
 
-  scr_write_message(jidto, text,
-                    0, prefix|HBB_PREFIX_OUT|HBB_PREFIX_HLIGHT_OUT, 0, xep184);
+  scr_write_message(jidto, text, nick,
+                    0, prefix|HBB_PREFIX_OUT|HBB_PREFIX_HLIGHT_OUT, xep184);
 
   // Show jidto's buffer unless the buddy is not in the buddylist
   if (roster_elt && g_list_position(buddylist, roster_elt->data) != -1)
@@ -4508,8 +4476,36 @@ void scr_getch(keycode_t *kcode)
   return;
 }
 
+static gboolean format_changed;
+
+//  scr_format_changed()
+// The message formats have changed: the buffers will be rebuilt.
+void scr_format_changed(void)
+{
+  format_changed = TRUE;
+}
+
+static void rebuild_win_buffer(gpointer key, gpointer value, gpointer data)
+{
+  winbuf_t *wbp = value;
+  if (!(wbp && wbp->bd))
+    return;
+  wbp->bd->top = hbuf_previous_persistent(wbp->bd->top);
+  hbuf_rebuild(&wbp->bd->hbuf, Layout.chat.w);
+}
+
 void scr_do_update(void)
 {
+  if (format_changed && Curses) {
+    format_changed = FALSE;
+    g_hash_table_foreach(winbufhash, rebuild_win_buffer, NULL);
+    if (statusWindow)
+      rebuild_win_buffer(NULL, statusWindow, NULL);
+    if (chatmode)
+      scr_show_buddy_window();
+    else
+      update_panels();
+  }
   if (colors_stalled)
     parse_colors();
   doupdate();

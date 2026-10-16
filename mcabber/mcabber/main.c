@@ -45,6 +45,7 @@
 #include "events.h"
 #include "compl.h"
 #include "mlua.h"
+#include "msgformat.h"
 
 #ifndef MODULES_ENABLE
 # include "fifo.h"
@@ -486,6 +487,7 @@ int main(int argc, char **argv)
   cmd_init();
   roster_init();
   settings_init();
+  msgfmt_init();
   scr_init_bindings();
   scr_init_settings();
   caps_init();

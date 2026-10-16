@@ -435,6 +435,13 @@ static int l_cancel(lua_State *L)
 
 /* -- Internal helpers for the prelude -- */
 
+// mc._format_changed(): the formats have been modified
+static int l_format_changed(lua_State *L)
+{
+  scr_format_changed();
+  return 0;
+}
+
 // mc._report(context, message): report an error
 static int l_report(lua_State *L)
 {
@@ -616,6 +623,7 @@ static const luaL_Reg mc_functions[] = {
   { "send",     l_send     },
   { "say",      l_say      },
   { "_report",  l_report   },
+  { "_format_changed", l_format_changed },
   { "_hook",    l_hook     },
   { NULL,       NULL       }
 };
