@@ -16,6 +16,7 @@
  */
 
 #include <stdio.h>
+#include <stdlib.h>
 #include <string.h>
 
 #include "mlua.h"
@@ -91,16 +92,37 @@ static int traceback_handler(lua_State *L)
   return 1;
 }
 
+// Protection against endless loops: a Lua call from C must finish within
+// "lua_timeout_ms" milliseconds (default 2000, 0 to disable).
+// Note: with LuaJIT, compiled loops cannot be interrupted.
+static gint64 call_start, call_limit;
+
+static void timeout_hook(lua_State *L, lua_Debug *ar)
+{
+  if (call_limit && g_get_monotonic_time() - call_start > call_limit)
+    luaL_error(L, "the Lua code took too long (more than %d ms)",
+               (int)(call_limit / 1000));
+}
+
 //  pcall_traceback(L, nargs, nresults)
 // lua_pcall() with a traceback; the error message is left on the stack.
 static int pcall_traceback(lua_State *L, int nargs, int nresults)
 {
   int base, ret;
+  gboolean outer = (depth == 0);
 
   if (depth >= MLUA_MAX_DEPTH) {
     lua_pop(L, nargs + 1);
     lua_pushstring(L, "Lua calls nested too deeply");
     return LUA_ERRRUN;
+  }
+
+  if (outer) {
+    const char *t = settings_opt_get("lua_timeout_ms");
+    call_limit = (gint64)(t ? atoi(t) : 2000) * 1000;
+    call_start = g_get_monotonic_time();
+    if (call_limit > 0)
+      lua_sethook(L, timeout_hook, LUA_MASKCOUNT, 10000);
   }
 
   base = lua_gettop(L) - nargs;   // Function index
@@ -110,6 +132,9 @@ static int pcall_traceback(lua_State *L, int nargs, int nresults)
   ret = lua_pcall(L, nargs, nresults, base);
   depth--;
   lua_remove(L, base);
+
+  if (outer)
+    lua_sethook(L, NULL, 0, 0);
   return ret;
 }
 
@@ -194,6 +219,19 @@ void mlua_init(void)
   }
   luaL_openlibs(L);
 
+  // With LuaJIT, compiled code ignores the hook used to stop endless loops
+  // (see timeout_hook()), so the JIT compiler is disabled.  The user can
+  // call jit.on() in the configuration file.
+  lua_getfield(L, LUA_GLOBALSINDEX, "jit");
+  if (lua_istable(L, -1)) {
+    lua_getfield(L, -1, "off");
+    if (lua_isfunction(L, -1))
+      lua_pcall(L, 0, 0, 0);
+    else
+      lua_pop(L, 1);
+  }
+  lua_pop(L, 1);
+
   lua_newtable(L);
   lua_setfield(L, LUA_REGISTRYINDEX, BINDINGS_KEY);
 
@@ -208,13 +246,17 @@ void mlua_init(void)
   lua_setfield(L, -2, "mcabber");
   lua_pop(L, 2);
 
-  // The prelude gets the mc table as argument
+  // The prelude gets the mc table as argument, and returns the event
+  // handlers table and dispatcher.
   if (luaL_loadbuffer(L, mlua_prelude, strlen(mlua_prelude), "=prelude")) {
     mlua_report_error("prelude", lua_tostring(L, -1));
     lua_pop(L, 2);
   } else {
     lua_insert(L, -2);
-    mlua_pcall(L, 1, 0, "prelude");
+    if (!mlua_pcall(L, 1, 2, "prelude")) {
+      lua_setfield(L, LUA_REGISTRYINDEX, "mcabber.emit");
+      lua_setfield(L, LUA_REGISTRYINDEX, "mcabber.handlers");
+    }
   }
 }
 

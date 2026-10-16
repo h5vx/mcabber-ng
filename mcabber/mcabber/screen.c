@@ -4271,6 +4271,32 @@ static void refresh_inputline(void)
         MIN((int)InputLayout.cursor_col, width - 1));
 }
 
+//  scr_get_inputline(), scr_set_inputline(text), scr_insert_inputline(text)
+// Access to the input line (strings in the locale charset).
+const char *scr_get_inputline(void)
+{
+  return inputLine;
+}
+
+void scr_set_inputline(const char *text)
+{
+  if (strlen(text) > INPUTLINE_LENGTH) {
+    scr_LogPrint(LPRINT_NORMAL, "Text too long for the input line.");
+    return;
+  }
+  strcpy(inputLine, text);
+  ptr_inputline = inputLine + strlen(inputLine);
+  if (Curses)
+    refresh_inputline();
+}
+
+void scr_insert_inputline(const char *text)
+{
+  scr_insert_text(text);
+  if (Curses)
+    refresh_inputline();
+}
+
 void scr_handle_CtrlC(void)
 {
   if (!Curses) return;

@@ -32,6 +32,7 @@ void cmd_room_whois(gpointer bud, const char *nick, guint interactive);
 void cmd_room_leave(gpointer bud, char *arg);
 void cmd_setstatus(const char *recipient, const char *arg);
 void say_cmd(char *arg, int parse_flags);
+int  cmd_send_message(const char *fjid, const char *msg, const char *subj);
 
 #endif /* __MCABBER_COMMANDS_H__ */
 

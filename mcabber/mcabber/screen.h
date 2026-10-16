@@ -95,6 +95,9 @@ void scr_write_outgoing_message(const char *jidto,   const char *text,
 void scr_getch(keycode_t *kcode);
 void scr_process_key(keycode_t kcode);
 void scr_process_input(void);
+const char *scr_get_inputline(void);
+void scr_set_inputline(const char *text);
+void scr_insert_inputline(const char *text);
 
 void scr_init_bindings(void);
 gboolean scr_bind_key(const char *name, const char *command, GError **err);

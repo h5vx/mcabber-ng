@@ -39,6 +39,34 @@ void      mlua_unbind(const char *keyname);
 void      mlua_foreach_binding(void (*cb)(const char *key, void *data),
                                void *data);
 
+/* -- Events (mlua_events.c) -- */
+
+typedef struct mlua_event mlua_event_t;
+
+typedef enum {
+  MLUA_CONTINUE = 0,
+  MLUA_STOP,        // A handler stopped the event
+  MLUA_DROP         // A handler asked to drop the event
+} mlua_evres_t;
+
+//  mlua_event_new(event)
+// Prepare an event for the Lua handlers.  Returns NULL if there is no
+// handler for this event (all the mlua_event_* functions accept NULL).
+mlua_event_t *mlua_event_new(const char *event);
+void mlua_event_set_str(mlua_event_t *ev, const char *key, const char *value);
+void mlua_event_set_int(mlua_event_t *ev, const char *key, gint64 value);
+void mlua_event_set_bool(mlua_event_t *ev, const char *key, gboolean value);
+mlua_evres_t mlua_event_emit(mlua_event_t *ev);
+// Read a field after the handlers have run (newly allocated string, or NULL
+// if the field is not a string)
+gchar *mlua_event_get_str(mlua_event_t *ev, const char *key);
+void mlua_event_free(mlua_event_t *ev);
+// Emit an event without fields
+mlua_evres_t mlua_emit_simple(const char *event);
+
+// Name of a status ("online", "away"...), for enum imstatus values
+const char *mlua_status_name(int status);
+
 // Command handler for /lua
 void      mlua_cmd_lua(char *arg);
 

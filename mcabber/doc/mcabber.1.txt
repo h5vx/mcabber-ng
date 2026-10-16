@@ -616,9 +616,31 @@ mc.timer(milliseconds, function [, repeat])::
         Call the function after the delay (repeatedly if 'repeat' is true,
         until the function returns false).  Returns an id for mc.cancel(id).
 
+mc.on(event, function(ev) ... end [, { priority = n }])::
+        Run a function when an event occurs (see EVENTS below).  Returns an
+        id for mc.off(id).  Handlers with a lower priority run first (default
+        0).  A handler can return mc.DROP (or false) to drop the event when
+        possible, or mc.STOP to stop running the other handlers.
+
+mc.send(jid, text [, { subject = "..." }]), mc.say(text)::
+        Send a message to a contact (or a room), or to the current buddy.
+
+mc.buddy.current()::
+        Information about the selected buddy: a table with the 'jid',
+        'name', 'type' ("user", "room", "agent", "group", "special"),
+        'status' and 'resource' fields, or nil.
+
+mc.input.get(), mc.input.set(text), mc.input.insert(text)::
+        Read, replace or insert text in the input line.
+
 mc.print(...), mc.log(...), mc.debug(...)::
         Print to the log window (mc.log also writes to the trace log file,
         mc.debug only when debugging is enabled).
+
+mc.shell_quote(text)::
+        Quote a string for the shell.  Texts coming from the network
+        (messages, nicknames...) must always be quoted before being passed to
+        os.execute() or io.popen().
 
 mc.version, mc.config_dir, mc.config_file::
         The mcabber-ng version, configuration directory and file.
@@ -626,6 +648,68 @@ mc.version, mc.config_dir, mc.config_file::
 Other Lua files can be loaded with require(): <config dir>/lua/ is in the
 module search path.  The '/lua' command runs Lua code at runtime ("/lua 1+1"
 prints 2) and '/source' runs a Lua file.
+
+EVENTS
+------
+Handlers receive a table describing the event.  Times are Unix timestamps,
+statuses are "online", "free", "dnd", "notavail", "away", "invisible" or
+"offline".
+
+message_in::
+        A message has been received, before it is displayed and logged.
+        Fields: jid, resource, nick (rooms), text, muc (room message),
+        private (private message from a room participant), time, delayed,
+        carbon, error, encrypted ("pgp", "otr" or nil).  The handlers can
+        change 'text'.  mc.DROP drops the message.
+
+message_received::
+        A message has been displayed.  Same fields as message_in, plus
+        attention, highlight (your nick is in a room message), own (your
+        message in a room), active (the window of this contact is open).
+
+message_send::
+        A message is about to be sent.  Fields: jid, bare_jid, text,
+        subject, muc, private.  The handlers can change 'text' and
+        'subject'.  mc.DROP cancels the message.
+
+message_out::
+        A message has been sent.  Fields: jid, nick, text, muc, private,
+        time, carbon (sent by another client), encrypted.
+
+status::
+        The status of a contact has changed.  Fields: jid, resource, old,
+        new, message, priority, time.
+
+my_status::
+        Your status has changed.  Fields: old, new, message.
+
+connect, disconnect::
+        After the connection (when the roster has been received), before
+        the disconnection.
+
+unread::
+        The number of unread buffers has changed.  Fields: unread,
+        attention, muc_unread, muc_attention.
+
+subscription::
+        A subscription request or answer has been received.  Fields: type
+        ("subscribe", "unsubscribe", "subscribed", "unsubscribed"), jid,
+        message.  mc.DROP ignores it.
+
+receipt::
+        A message delivery receipt has been received.  Fields: jid, id.
+
+ready, quit::
+        The user interface is ready (before connecting), mcabber-ng is
+        exiting.
+
+hook-*::
+        Hooks run by modules; the fields are the hook arguments (strings).
+
+Lua code called by mcabber-ng (handlers, key bindings, timers) must finish
+within 'lua_timeout_ms' milliseconds (default 2000, 0 disables the check).
+The LuaJIT compiler is disabled because compiled code cannot be interrupted;
+call jit.on() in the configuration file to enable it.
 
 KEY NAMES
 ---------

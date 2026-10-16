@@ -15,15 +15,16 @@ mcabber_ng_SOURCES = main.c main.h roster.c roster.h events.c events.h \
 		  xmpp_iq.c xmpp_iq.h xmpp_iqrequest.c xmpp_iqrequest.h \
 		  xmpp_muc.c xmpp_muc.h xmpp_s10n.c xmpp_s10n.h \
 		  caps.c caps.h help.c help.h carbons.c carbons.h \
-		  mlua.c mlua.h mlua_compat.h mlua_api.c
+		  mlua.c mlua.h mlua_compat.h mlua_api.c mlua_events.c
 nodist_mcabber_ng_SOURCES = mlua_prelude.h
 EXTRA_DIST = mlua_prelude.lua
 
 # The Lua prelude is compiled into the program as a C string
 mlua_prelude.h: $(srcdir)/mlua_prelude.lua
-	$(AM_V_GEN)( echo 'static const char mlua_prelude[] ='; \
-	  sed -e 's/\\/\\\\/g' -e 's/"/\\"/g' -e 's/^/  "/' -e 's/$$/\\n"/' \
-	    $(srcdir)/mlua_prelude.lua; echo ';' ) > $@
+	$(AM_V_GEN)( echo 'static const char mlua_prelude[] = {'; \
+	  od -An -v -tx1 $(srcdir)/mlua_prelude.lua | \
+	    sed -e 's/ *\([0-9a-f][0-9a-f]\)/0x\1,/g'; \
+	  echo '0 };' ) > $@
 
 if OTR
 mcabber_ng_SOURCES += otr.c otr.h nohtml.c nohtml.h

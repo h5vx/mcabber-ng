@@ -1285,6 +1285,7 @@ static int send_message_to(const char *fjid, const char *msg, const char *subj,
   gint retval = 0;
   int isroom;
   gpointer xep184 = NULL;
+  gchar *lua_msg = NULL, *lua_subj = NULL;
 
   if (!xmpp_is_online()) {
     scr_LogPrint(LPRINT_NORMAL, "You are not connected.");
@@ -1321,6 +1322,37 @@ static int send_message_to(const char *fjid, const char *msg, const char *subj,
     muc_nick = NULL;
   }
 
+  // Lua handlers can drop or modify the message
+  {
+    mlua_event_t *ev = mlua_event_new("message_send");
+    if (ev) {
+      mlua_event_set_str(ev, "jid", fjid);
+      mlua_event_set_str(ev, "bare_jid", bare_jid);
+      mlua_event_set_str(ev, "text", msg);
+      mlua_event_set_str(ev, "subject", subj);
+      mlua_event_set_bool(ev, "muc", isroom);
+      mlua_event_set_bool(ev, "private", muc_nick != NULL);
+      if (mlua_event_emit(ev) == MLUA_DROP) {
+        scr_LogPrint(LPRINT_DEBUG, "Message dropped (Lua handler).");
+        mlua_event_free(ev);
+        g_free(bare_jid);
+        return 1;
+      }
+      lua_msg = mlua_event_get_str(ev, "text");
+      lua_subj = mlua_event_get_str(ev, "subject");
+      mlua_event_free(ev);
+      if (lua_msg)
+        msg = lua_msg;
+      subj = lua_subj;
+      if (!*msg) {
+        g_free(lua_msg);
+        g_free(lua_subj);
+        g_free(bare_jid);
+        return 1;
+      }
+    }
+  }
+
   // local part (UI, logging, etc.)
   if (subj)
     hmsg = g_strdup_printf("[%s]\n%s", subj, msg);
@@ -1338,13 +1370,35 @@ static int send_message_to(const char *fjid, const char *msg, const char *subj,
   }
 
   // Hook
-  if (!isroom)
+  if (!isroom) {
     hk_message_out(bare_jid, muc_nick, 0, hmsg, crypted, FALSE, xep184);
+  } else {
+    // Room messages are displayed when the server sends them back
+    mlua_event_t *ev = mlua_event_new("message_out");
+    mlua_event_set_str(ev, "jid", bare_jid);
+    mlua_event_set_str(ev, "text", hmsg);
+    mlua_event_set_bool(ev, "muc", TRUE);
+    mlua_event_set_bool(ev, "private", FALSE);
+    mlua_event_set_int(ev, "time", time(NULL));
+    mlua_event_set_bool(ev, "carbon", FALSE);
+    mlua_event_emit(ev);
+    mlua_event_free(ev);
+  }
 
 send_message_to_return:
   if (hmsg != msg) g_free(hmsg);
+  g_free(lua_msg);
+  g_free(lua_subj);
   g_free(bare_jid);
   return retval;
+}
+
+//  cmd_send_message(fjid, msg, subj)
+// Send a message (UTF-8) without changing the current window.
+// Returns 0 on success.
+int cmd_send_message(const char *fjid, const char *msg, const char *subj)
+{
+  return send_message_to(fjid, msg, subj, LM_MESSAGE_SUB_TYPE_NOT_SET, TRUE);
 }
 
 //  send_message(msg, subj, type_overwrite)

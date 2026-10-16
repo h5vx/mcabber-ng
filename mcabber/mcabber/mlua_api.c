@@ -26,6 +26,8 @@
 #include "screen.h"
 #include "keys.h"
 #include "utils.h"
+#include "roster.h"
+#include "hooks.h"
 
 /* -- Printing -- */
 
@@ -430,6 +432,173 @@ static int l_cancel(lua_State *L)
   return 1;
 }
 
+
+/* -- Internal helpers for the prelude -- */
+
+// mc._report(context, message): report an error
+static int l_report(lua_State *L)
+{
+  mlua_report_error(luaL_optstring(L, 1, "lua"), luaL_optstring(L, 2, NULL));
+  return 0;
+}
+
+#ifdef MODULES_ENABLE
+static guint hook_bridge(const gchar *hookname, hk_arg_t *args,
+                         gpointer userdata)
+{
+  mlua_event_t *ev = mlua_event_new(hookname);
+  mlua_evres_t res;
+  hk_arg_t *a;
+
+  for (a = args; a && a->name; a++)
+    mlua_event_set_str(ev, a->name, a->value);
+  res = mlua_event_emit(ev);
+  mlua_event_free(ev);
+  if (res == MLUA_DROP)
+    return HOOK_HANDLER_RESULT_NO_MORE_HANDLER_DROP_DATA;
+  if (res == MLUA_STOP)
+    return HOOK_HANDLER_RESULT_NO_MORE_HANDLER;
+  return HOOK_HANDLER_RESULT_ALLOW_MORE_HANDLERS;
+}
+#endif
+
+// mc._hook(name): run the Lua handlers when a module runs this hook
+static int l_hook(lua_State *L)
+{
+#ifdef MODULES_ENABLE
+  static GHashTable *registered;
+  const char *name = luaL_checkstring(L, 1);
+
+  if (!registered)
+    registered = g_hash_table_new_full(g_str_hash, g_str_equal, g_free, NULL);
+  if (!g_hash_table_lookup(registered, name)) {
+    hk_add_handler(hook_bridge, name, G_PRIORITY_DEFAULT, NULL);
+    g_hash_table_insert(registered, g_strdup(name), GINT_TO_POINTER(1));
+  }
+#endif
+  return 0;
+}
+
+/* -- Messages, buddies, input line -- */
+
+const char *mlua_status_name(int status)
+{
+  static const char *names[] = { "offline", "online", "free", "dnd",
+                                 "notavail", "away", "invisible" };
+  if (status < 0 || status >= (int)G_N_ELEMENTS(names))
+    return "unknown";
+  return names[status];
+}
+
+// mc.send(jid, text [, { subject = "..." }]) -> boolean
+static int l_send(lua_State *L)
+{
+  const char *jid = luaL_checkstring(L, 1);
+  const char *text = luaL_checkstring(L, 2);
+  const char *subject = NULL;
+
+  if (lua_istable(L, 3)) {
+    lua_getfield(L, 3, "subject");
+    subject = lua_tostring(L, -1);
+  }
+  lua_pushboolean(L, cmd_send_message(jid, text, subject) == 0);
+  return 1;
+}
+
+// mc.say(text): send a message to the current buddy
+static int l_say(lua_State *L)
+{
+  gchar *text = from_utf8(luaL_checkstring(L, 1));
+  if (text) {
+    say_cmd(text, 0);
+    g_free(text);
+  }
+  return 0;
+}
+
+static const char *buddy_type_name(guint type)
+{
+  if (type & ROSTER_TYPE_USER)    return "user";
+  if (type & ROSTER_TYPE_ROOM)    return "room";
+  if (type & ROSTER_TYPE_AGENT)   return "agent";
+  if (type & ROSTER_TYPE_GROUP)   return "group";
+  if (type & ROSTER_TYPE_SPECIAL) return "special";
+  return "unknown";
+}
+
+static void set_str_field(lua_State *L, const char *key, const char *value)
+{
+  if (value) {
+    lua_pushstring(L, value);
+    lua_setfield(L, -2, key);
+  }
+}
+
+// mc.buddy.current() -> { jid, name, type, status, resource } or nil
+static int l_buddy_current(lua_State *L)
+{
+  gpointer bud;
+  guint type;
+
+  if (!current_buddy) {
+    lua_pushnil(L);
+    return 1;
+  }
+  bud = BUDDATA(current_buddy);
+  type = buddy_gettype(bud);
+  lua_newtable(L);
+  set_str_field(L, "jid", buddy_getjid(bud));
+  set_str_field(L, "name", buddy_getname(bud));
+  set_str_field(L, "type", buddy_type_name(type));
+  if (type & (ROSTER_TYPE_USER|ROSTER_TYPE_ROOM|ROSTER_TYPE_AGENT)) {
+    set_str_field(L, "status",
+                  mlua_status_name(buddy_getstatus(bud, NULL)));
+    set_str_field(L, "resource", buddy_getactiveresource(bud));
+  }
+  return 1;
+}
+
+// mc.input.get() -> text
+static int l_input_get(lua_State *L)
+{
+  gchar *text = to_utf8(scr_get_inputline());
+  lua_pushstring(L, text ? text : "");
+  g_free(text);
+  return 1;
+}
+
+// mc.input.set(text)
+static int l_input_set(lua_State *L)
+{
+  gchar *text = from_utf8(luaL_checkstring(L, 1));
+  if (text)
+    scr_set_inputline(text);
+  g_free(text);
+  return 0;
+}
+
+// mc.input.insert(text): insert at the cursor position
+static int l_input_insert(lua_State *L)
+{
+  gchar *text = from_utf8(luaL_checkstring(L, 1));
+  if (text)
+    scr_insert_inputline(text);
+  g_free(text);
+  return 0;
+}
+
+static const luaL_Reg buddy_functions[] = {
+  { "current", l_buddy_current },
+  { NULL, NULL }
+};
+
+static const luaL_Reg input_functions[] = {
+  { "get",    l_input_get },
+  { "set",    l_input_set },
+  { "insert", l_input_insert },
+  { NULL, NULL }
+};
+
 static const luaL_Reg mc_functions[] = {
   { "print",    l_print    },
   { "log",      l_log      },
@@ -444,6 +613,10 @@ static const luaL_Reg mc_functions[] = {
   { "key_name", l_key_name },
   { "timer",    l_timer    },
   { "cancel",   l_cancel   },
+  { "send",     l_send     },
+  { "say",      l_say      },
+  { "_report",  l_report   },
+  { "_hook",    l_hook     },
   { NULL,       NULL       }
 };
 
@@ -454,6 +627,12 @@ void mlua_api_register(lua_State *L)
                                    timer_destroy);
 
   mlua_setfuncs(L, mc_functions);
+  mlua_newsubtable(L, "buddy");
+  mlua_setfuncs(L, buddy_functions);
+  lua_pop(L, 1);
+  mlua_newsubtable(L, "input");
+  mlua_setfuncs(L, input_functions);
+  lua_pop(L, 1);
 
   lua_pushstring(L, MCABBER_VERSION);
   lua_setfield(L, -2, "version");

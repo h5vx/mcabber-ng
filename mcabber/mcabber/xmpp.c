@@ -39,6 +39,7 @@
 #include "utils.h"
 #include "main.h"
 #include "carbons.h"
+#include "mlua.h"
 
 #define RECONNECTION_TIMEOUT    60L
 
@@ -1252,6 +1253,13 @@ static LmHandlerResult handle_messages(LmMessageHandler *handler,
           hk_run_handlers("hook-mdr-received", args);
         }
 #endif
+        {
+          mlua_event_t *ev = mlua_event_new("receipt");
+          mlua_event_set_str(ev, "jid", from);
+          mlua_event_set_str(ev, "id", id);
+          mlua_event_emit(ev);
+          mlua_event_free(ev);
+        }
       }
     }
   }

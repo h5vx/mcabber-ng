@@ -584,6 +584,8 @@ int main(int argc, char **argv)
   /* Load previous roster state */
   hlog_load_state();
 
+  mlua_emit_simple("ready");
+
   main_context = g_main_context_default();
 
   if (ret < 0) {
@@ -628,6 +630,7 @@ int main(int argc, char **argv)
     g_source_unref(mc_source);
   }
 
+  mlua_emit_simple("quit");
   evs_deinit();
 #ifdef MODULES_ENABLE
   modules_deinit();

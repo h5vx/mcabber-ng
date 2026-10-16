@@ -670,3 +670,29 @@ mc.bind {
 
 -- Sample alias to join mcabber channel with "/jmc"
 -- mc.alias("jmc", "room join mcabber@conf.lilotux.net")
+
+-- Events
+-- Lua functions can be called when something happens (see the EVENTS
+-- section of the manual page).  For example:
+--
+-- Join a room once connected (commands like "room" cannot be used while the
+-- configuration file is read):
+-- mc.on("connect", function()
+--   mc.command("room join mcabber@conf.lilotux.net")
+-- end)
+--
+-- Drop messages from somebody, and replace some text:
+-- mc.on("message_in", function(ev)
+--   if ev.jid == "spammer@example.org" then return mc.DROP end
+--   ev.text = ev.text:gsub(":shrug:", "¯\\_(ツ)_/¯")
+-- end)
+--
+-- Desktop notification for private messages and highlights:
+-- mc.on("message_received", function(ev)
+--   if ev.delayed or ev.own or ev.active then return end
+--   if not ev.muc or ev.highlight then
+--     -- Always quote texts coming from the network with mc.shell_quote
+--     os.execute(("notify-send %s %s &"):format(
+--       mc.shell_quote(ev.nick or ev.jid), mc.shell_quote(ev.text)))
+--   end
+-- end)

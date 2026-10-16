@@ -24,6 +24,12 @@ local function quote(s)
 end
 mc.quote = quote
 
+-- Quote a string for the shell (os.execute, io.popen): never pass message
+-- texts or nicknames to the shell without it.
+function mc.shell_quote(s)
+  return "'" .. tostring(s):gsub("'", "'\\''") .. "'"
+end
+
 mc.color = {}
 
 -- mc.color.roster("ofd", "*@example.org", "brightgreen")
@@ -61,3 +67,110 @@ function mc.status(status, message)
   end
   return mc.command("status " .. status)
 end
+
+-- Event handlers -----------------------------------------------------------
+
+local known_events = {
+  message_in = true, message_received = true, message_send = true,
+  message_out = true, status = true, my_status = true, connect = true,
+  disconnect = true, unread = true, subscription = true, receipt = true,
+  ready = true, quit = true,
+}
+
+local handlers = {}   -- event name -> list of handlers, sorted by priority
+local by_id = {}
+local next_id = 0
+local MAX_ERRORS = 5
+
+-- mc.on(event, function(ev) ... end [, { priority = n }]) -> id
+-- Handlers with a lower priority run first.  A handler can return mc.DROP
+-- (or false) to drop the event (when possible), or mc.STOP to stop
+-- running the other handlers.
+function mc.on(event, fn, opts)
+  if type(event) ~= "string" then
+    error("bad argument #1 to 'on' (event name expected)", 2)
+  end
+  if type(fn) ~= "function" then
+    error("bad argument #2 to 'on' (function expected)", 2)
+  end
+  local hook = event:sub(1, 5) == "hook-"
+  if not known_events[event] and not hook then
+    error("unknown event \"" .. event .. "\"", 2)
+  end
+  local prio = opts and opts.priority or 0
+  next_id = next_id + 1
+  local h = { id = next_id, fn = fn, priority = prio, errors = 0,
+              event = event }
+  local list = handlers[event]
+  if not list then
+    list = {}
+    handlers[event] = list
+  end
+  local pos = #list + 1
+  for i, o in ipairs(list) do
+    if o.priority > prio then
+      pos = i
+      break
+    end
+  end
+  table.insert(list, pos, h)
+  by_id[h.id] = h
+  if hook then
+    mc._hook(event)   -- Run the handlers when a module runs this hook
+  end
+  return h.id
+end
+
+-- mc.off(id): remove a handler
+function mc.off(id)
+  local h = by_id[id]
+  if not h then
+    return false
+  end
+  by_id[id] = nil
+  h.removed = true
+  local list = handlers[h.event]
+  for i, o in ipairs(list) do
+    if o == h then
+      table.remove(list, i)
+      break
+    end
+  end
+  return true
+end
+
+local traceback = debug.traceback
+
+-- Called by mcabber-ng to run the handlers of an event
+local function emit(event, ev)
+  local list = handlers[event]
+  if not list or #list == 0 then
+    return nil
+  end
+  ev.event = event
+  local copy = { unpack(list) }   -- Handlers may call mc.on/mc.off
+  for _, h in ipairs(copy) do
+    if not h.removed then
+      local ok, ret = xpcall(function() return h.fn(ev) end, traceback)
+      if ok then
+        h.errors = 0
+        if ret == mc.DROP or ret == false then
+          return "drop"
+        elseif ret == mc.STOP then
+          return "stop"
+        end
+      else
+        h.errors = h.errors + 1
+        mc._report("event " .. event, ret)
+        if h.errors >= MAX_ERRORS then
+          mc._report("event " .. event, "handler disabled after " ..
+                     MAX_ERRORS .. " consecutive errors")
+          mc.off(h.id)
+        end
+      end
+    end
+  end
+  return nil
+end
+
+return handlers, emit
