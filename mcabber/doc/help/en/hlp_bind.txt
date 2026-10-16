@@ -1,17 +1,19 @@
 
- /BIND [keycode [= command line]]
+ /BIND [key [= command line]]
 
-Bind the command to the key given as "keycode".  To examine which keys are currently not used look at `mcabber` log window and press examined key.  For example: "Unknown key=265" means that you can bind some command to key #265.
+Bind the command line to a key combination.  Keys are given by name, like "Alt+j", "Ctrl+Left", "F5" or "Ctrl+Shift+PgUp".  To find the name of a key, press it: unbound keys are reported in the log window ("Unknown key: Alt+j").
 
 /bind
- Display list of current bindings
-/bind keycode
+ Display the list of current bindings
+/bind key
  Display the command line bound to this key
-/bind keycode=
- Unbind key with code "keycode"
-/bind keycode = command line
- Bind "command line" to the key with code "keycode"
+/bind key =
+ Remove the binding of "key"
+/bind key = command line
+ Bind "command line" to the key
 
-Example: "/bind 265 = status away" (265 is F1).
-Note: keycodes can be different depending on your ncurses configuration.
+Modifiers: Ctrl (C), Alt (Meta, M), Shift (S), joined with "+" or "-".
+Named keys: Enter, Tab, Backspace, Esc, Space, Up, Down, Left, Right, Home, End, PgUp, PgDn, Ins, Del, F1..F63, WheelUp, WheelDown.  Any other key is a single character: "Alt+j", "Alt+ж", "Ctrl+=".
+Example: "/bind F5 = roster toggle_offline"
+Note: some combinations cannot be distinguished by the terminal (Ctrl+i is Tab, Ctrl+m is Enter).
 Tip: aliases also can be used instead of commands.

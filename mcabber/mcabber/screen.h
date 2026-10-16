@@ -25,6 +25,7 @@ void spellcheck_deinit(void);
 #endif
 
 #include <mcabber/hbuf.h>
+#include <mcabber/keys.h>
 #include <mcabber/logprint.h>
 #include <mcabber/roster.h>
 
@@ -67,23 +68,14 @@ typedef struct {
   int utf8;
   enum {
     MKEY_NONE = 0,
-    MKEY_META,
-    MKEY_EQUIV,
-    MKEY_CTRL_PGUP,
-    MKEY_CTRL_PGDOWN,
-    MKEY_SHIFT_PGUP,
-    MKEY_SHIFT_PGDOWN,
-    MKEY_CTRL_SHIFT_PGUP,
-    MKEY_CTRL_SHIFT_PGDOWN,
-    MKEY_CTRL_HOME,
-    MKEY_CTRL_END,
-    MKEY_CTRL_INS,
-    MKEY_CTRL_DEL,
-    MKEY_CTRL_SHIFT_HOME,
-    MKEY_CTRL_SHIFT_END,
-    MKEY_MOUSE
+    MKEY_META,      // Esc + value
+    MKEY_MOUSE,     // value is the mouse event mask
+    MKEY_SPEC       // Escape sequence decoded into spec
   } mcode;
+  keyspec_t spec;
 } keycode_t;
+
+gchar *scr_keycode_name(const keycode_t *kcode);
 
 typedef enum {
   MC_ALL,
@@ -103,6 +95,7 @@ void scr_getch(keycode_t *kcode);
 void scr_process_key(keycode_t kcode);
 
 void scr_init_bindings(void);
+gboolean scr_bind_key(const char *name, const char *command, GError **err);
 void scr_init_locale_charset(void);
 void scr_init_curses(void);
 void scr_init_settings(void);

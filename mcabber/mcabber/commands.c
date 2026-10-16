@@ -2431,43 +2431,105 @@ do_alias_return:
   g_free(alias);
 }
 
-static void dump_bind(char *k, char *v, void *param)
+static void collect_bind(char *k, char *v, void *param)
 {
-  scr_LogPrint(LPRINT_NORMAL, "Key %4s is bound to: %s", k, v);
+  g_ptr_array_add((GPtrArray *)param, k);
+}
+
+static gint cmp_str(gconstpointer a, gconstpointer b)
+{
+  return g_utf8_collate(*(const char **)a, *(const char **)b);
+}
+
+static void dump_bindings(void)
+{
+  GPtrArray *keys = g_ptr_array_new();
+  guint i;
+
+  settings_foreach(SETTINGS_TYPE_BINDING, &collect_bind, keys);
+  g_ptr_array_sort(keys, cmp_str);
+  for (i = 0; i < keys->len; i++) {
+    const char *k = g_ptr_array_index(keys, i);
+    scr_LogPrint(LPRINT_NORMAL, "Key %-12s is bound to: %s", k,
+                 settings_get(SETTINGS_TYPE_BINDING, k));
+  }
+  g_ptr_array_free(keys, TRUE);
+}
+
+//  split_bind_arg(arg, &key, &value)
+// Parse "key", "key =" or "key = command line".
+// Returns TRUE if there is an assignment (*value is NULL for "key =").
+static gboolean split_bind_arg(const char *arg, gchar **pkey, gchar **pvalue)
+{
+  const char *p = arg, *kend, *v;
+
+  *pkey = *pvalue = NULL;
+  while (*p == ' ' || *p == '\t')
+    p++;
+  if (!*p)
+    return FALSE;
+
+  // The key ends with a space, or with a '=' (but "Alt+=" is a key)
+  for (kend = p + 1; *kend && *kend != ' ' && *kend != '\t'; kend++)
+    if (*kend == '=' && kend[-1] != '+' && kend[-1] != '-')
+      break;
+  *pkey = g_strndup(p, kend - p);
+
+  for (v = kend; *v == ' ' || *v == '\t'; v++)
+    ;
+  if (*v != '=')
+    return FALSE;
+  for (v++; *v == ' ' || *v == '\t'; v++)
+    ;
+  if (*v)
+    *pvalue = g_strchomp(g_strdup(v));
+  return TRUE;
 }
 
 static void do_bind(char *arg)
 {
-  guint assign;
-  gchar *k_code, *value;
+  gboolean assign;
+  gchar *key, *value;
+  GError *err = NULL;
 
-  assign = parse_assigment(arg, &k_code, &value);
-  if (!k_code) {
-    settings_foreach(SETTINGS_TYPE_BINDING, &dump_bind, NULL);
+  assign = split_bind_arg(arg, &key, &value);
+  if (!key) {
+    dump_bindings();
     scr_setmsgflag_if_needed(SPECIAL_BUFFER_STATUS_ID, TRUE);
     scr_setattentionflag_if_needed(SPECIAL_BUFFER_STATUS_ID, TRUE,
                                    ROSTER_UI_PRIO_STATUS_WIN_MESSAGE, prio_max);
     return;
   }
   if (!assign) {  // This is a query
-    const char *val = settings_get(SETTINGS_TYPE_BINDING, k_code);
-    if (val)
-      scr_LogPrint(LPRINT_NORMAL, "Key %s is bound to: %s", k_code, val);
-    else
-      scr_LogPrint(LPRINT_NORMAL, "Key %s is not bound.", k_code);
-    g_free(k_code);
+    keyspec_t k;
+    gchar *canon = NULL;
+    if (key_parse(key, &k, &err) || key_from_legacy(key, &k))
+      canon = key_format(&k);
+    if (!canon) {
+      scr_LogPrint(LPRINT_NORMAL, "Invalid key: %s", err->message);
+    } else {
+      const char *val = settings_get(SETTINGS_TYPE_BINDING, canon);
+      if (val)
+        scr_LogPrint(LPRINT_NORMAL, "Key %s is bound to: %s", canon, val);
+      else
+        scr_LogPrint(LPRINT_NORMAL, "Key %s is not bound.", canon);
+    }
+    g_clear_error(&err);
+    g_free(canon);
+    g_free(key);
     return;
   }
   // Update the key binding
-  if (!value) {
-    settings_del(SETTINGS_TYPE_BINDING, k_code);
-  } else {
+  {
     gchar *value_utf8 = to_utf8(value);
-    settings_set(SETTINGS_TYPE_BINDING, k_code, value_utf8);
+    if (!scr_bind_key(key, value_utf8, &err)) {
+      scr_LogPrint(LPRINT_NORMAL, "Invalid key: %s", err->message);
+      g_error_free(err);
+    }
     g_free(value_utf8);
-    g_free(value);
   }
-  g_free(k_code);
+  g_free(value);
+  g_free(key);
 }
 
 static void do_quit(char *arg)

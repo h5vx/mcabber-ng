@@ -3,7 +3,7 @@ bin_PROGRAMS = mcabber-ng
 # Code that does not depend on ncurses, XMPP or the Lua state.
 # It is linked into the program and into the unit tests (see ../tests).
 noinst_LIBRARIES = libmcpure.a
-libmcpure_a_SOURCES = utf8.c utf8.h
+libmcpure_a_SOURCES = utf8.c utf8.h keys.c keys.h
 
 mcabber_ng_SOURCES = main.c main.h roster.c roster.h events.c events.h \
 		  commands.c commands.h compl.c compl.h \
@@ -44,7 +44,7 @@ mcabber_ng_SOURCES += modules.c modules.h api.h
 mcabberinclude_HEADERS = main.h roster.h events.h \
 			 commands.h compl.h \
 			 hbuf.h screen.h logprint.h \
-			 settings.h hooks.h utf8.c utf8.h \
+			 settings.h hooks.h utf8.c utf8.h keys.h \
 			 histolog.h utils.h pgp.h \
 			 xmpp.h xmpp_helper.h xmpp_defines.h \
 			 xmpp_iq.h xmpp_iqrequest.h \

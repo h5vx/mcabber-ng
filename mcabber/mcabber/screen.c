@@ -167,16 +167,16 @@ gboolean Autoaway;
 
 gboolean vi_mode;
 
-#define MAX_KEYSEQ_LENGTH 8
+#define MAX_KEYSEQ_LENGTH 16
 
+// Escape sequences that ncurses doesn't know (without the leading Esc)
 typedef struct {
   char *seqstr;
-  guint mkeycode;
-  gint  value;
+  keyspec_t spec;
 } keyseq_t;
 
 GSList *keyseqlist;
-static void add_keyseq(char *seqstr, guint mkeycode, gint value);
+static void add_keyseq(char *seqstr, guint mods, gint key);
 
 static void scr_write_in_window(const char *winId, const char *text,
                                 time_t timestamp, unsigned int prefix_flags,
@@ -614,141 +614,138 @@ static void parse_colors(void)
 
 static void init_keycodes(void)
 {
-  add_keyseq("O5A", MKEY_EQUIV, 521); // Ctrl-Up
-  add_keyseq("O5B", MKEY_EQUIV, 514); // Ctrl-Down
-  add_keyseq("O5C", MKEY_EQUIV, 518); // Ctrl-Right
-  add_keyseq("O5D", MKEY_EQUIV, 516); // Ctrl-Left
-  add_keyseq("O6A", MKEY_EQUIV, 520); // Shift-Up
-  add_keyseq("O6B", MKEY_EQUIV, 513); // Shift-Down
-  add_keyseq("O6C", MKEY_EQUIV, 402); // Shift-Right
-  add_keyseq("O6D", MKEY_EQUIV, 393); // Shift-Left
-  add_keyseq("O2A", MKEY_EQUIV, 520); // Shift-Up
-  add_keyseq("O2B", MKEY_EQUIV, 513); // Shift-Down
-  add_keyseq("O2C", MKEY_EQUIV, 402); // Shift-Right
-  add_keyseq("O2D", MKEY_EQUIV, 393); // Shift-Left
-  add_keyseq("[5^", MKEY_CTRL_PGUP, 0);   // Ctrl-PageUp
-  add_keyseq("[6^", MKEY_CTRL_PGDOWN, 0); // Ctrl-PageDown
-  add_keyseq("[5@", MKEY_CTRL_SHIFT_PGUP, 0);   // Ctrl-Shift-PageUp
-  add_keyseq("[6@", MKEY_CTRL_SHIFT_PGDOWN, 0); // Ctrl-Shift-PageDown
-  add_keyseq("[7@", MKEY_CTRL_SHIFT_HOME, 0); // Ctrl-Shift-Home
-  add_keyseq("[8@", MKEY_CTRL_SHIFT_END, 0);  // Ctrl-Shift-End
-  add_keyseq("[8^", MKEY_CTRL_END, 0);  // Ctrl-End
-  add_keyseq("[7^", MKEY_CTRL_HOME, 0); // Ctrl-Home
-  add_keyseq("[2^", MKEY_CTRL_INS, 0);  // Ctrl-Insert
-  add_keyseq("[3^", MKEY_CTRL_DEL, 0);  // Ctrl-Delete
+  // Most sequences are decoded by ncurses (terminfo) or by the generic
+  // CSI decoder in scr_getch().  These are the remaining ones.
 
-  // Xterm
-  add_keyseq("[1;5A", MKEY_EQUIV, 521); // Ctrl-Up
-  add_keyseq("[1;5B", MKEY_EQUIV, 514); // Ctrl-Down
-  add_keyseq("[1;5C", MKEY_EQUIV, 518); // Ctrl-Right
-  add_keyseq("[1;5D", MKEY_EQUIV, 516); // Ctrl-Left
-  add_keyseq("[1;6A", MKEY_EQUIV, 520); // Ctrl-Shift-Up
-  add_keyseq("[1;6B", MKEY_EQUIV, 513); // Ctrl-Shift-Down
-  add_keyseq("[1;6C", MKEY_EQUIV, 402); // Ctrl-Shift-Right
-  add_keyseq("[1;6D", MKEY_EQUIV, 393); // Ctrl-Shift-Left
-  add_keyseq("[1;6H", MKEY_CTRL_SHIFT_HOME, 0); // Ctrl-Shift-Home
-  add_keyseq("[1;6F", MKEY_CTRL_SHIFT_END, 0);  // Ctrl-Shift-End
-  add_keyseq("[1;2A", MKEY_EQUIV, 521); // Shift-Up
-  add_keyseq("[1;2B", MKEY_EQUIV, 514); // Shift-Down
-  add_keyseq("[5;5~", MKEY_CTRL_PGUP, 0);   // Ctrl-PageUp
-  add_keyseq("[6;5~", MKEY_CTRL_PGDOWN, 0); // Ctrl-PageDown
-  add_keyseq("[1;5F", MKEY_CTRL_END, 0);  // Ctrl-End
-  add_keyseq("[1;5H", MKEY_CTRL_HOME, 0); // Ctrl-Home
-  add_keyseq("[2;5~", MKEY_CTRL_INS, 0);  // Ctrl-Insert
-  add_keyseq("[3;5~", MKEY_CTRL_DEL, 0);  // Ctrl-Delete
+  // rxvt
+  add_keyseq("O5A", KMOD_CTRL, KN_UP);
+  add_keyseq("O5B", KMOD_CTRL, KN_DOWN);
+  add_keyseq("O5C", KMOD_CTRL, KN_RIGHT);
+  add_keyseq("O5D", KMOD_CTRL, KN_LEFT);
+  add_keyseq("O6A", KMOD_CTRL|KMOD_SHIFT, KN_UP);
+  add_keyseq("O6B", KMOD_CTRL|KMOD_SHIFT, KN_DOWN);
+  add_keyseq("O6C", KMOD_CTRL|KMOD_SHIFT, KN_RIGHT);
+  add_keyseq("O6D", KMOD_CTRL|KMOD_SHIFT, KN_LEFT);
+  add_keyseq("O2A", KMOD_SHIFT, KN_UP);
+  add_keyseq("O2B", KMOD_SHIFT, KN_DOWN);
+  add_keyseq("O2C", KMOD_SHIFT, KN_RIGHT);
+  add_keyseq("O2D", KMOD_SHIFT, KN_LEFT);
+  add_keyseq("[5^", KMOD_CTRL, KN_PGUP);
+  add_keyseq("[6^", KMOD_CTRL, KN_PGDN);
+  add_keyseq("[5@", KMOD_CTRL|KMOD_SHIFT, KN_PGUP);
+  add_keyseq("[6@", KMOD_CTRL|KMOD_SHIFT, KN_PGDN);
+  add_keyseq("[7@", KMOD_CTRL|KMOD_SHIFT, KN_HOME);
+  add_keyseq("[8@", KMOD_CTRL|KMOD_SHIFT, KN_END);
+  add_keyseq("[7^", KMOD_CTRL, KN_HOME);
+  add_keyseq("[8^", KMOD_CTRL, KN_END);
+  add_keyseq("[2^", KMOD_CTRL, KN_INS);
+  add_keyseq("[3^", KMOD_CTRL, KN_DEL);
+  add_keyseq("[5$", KMOD_SHIFT, KN_PGUP);
+  add_keyseq("[6$", KMOD_SHIFT, KN_PGDN);
+  add_keyseq("[7$", KMOD_SHIFT, KN_HOME);
+  add_keyseq("[8$", KMOD_SHIFT, KN_END);
+  add_keyseq("[2$", KMOD_SHIFT, KN_INS);
+  add_keyseq("[3$", KMOD_SHIFT, KN_DEL);
 
-  // PuTTY
-  add_keyseq("[A", MKEY_EQUIV, 521); // Ctrl-Up
-  add_keyseq("[B", MKEY_EQUIV, 514); // Ctrl-Down
-  add_keyseq("[C", MKEY_EQUIV, 518); // Ctrl-Right
-  add_keyseq("[D", MKEY_EQUIV, 516); // Ctrl-Left
+  // PuTTY (in application cursor mode)
+  add_keyseq("[A", KMOD_CTRL, KN_UP);
+  add_keyseq("[B", KMOD_CTRL, KN_DOWN);
+  add_keyseq("[C", KMOD_CTRL, KN_RIGHT);
+  add_keyseq("[D", KMOD_CTRL, KN_LEFT);
 
   // screen
-  add_keyseq("Oa", MKEY_EQUIV, 521); // Ctrl-Up
-  add_keyseq("Ob", MKEY_EQUIV, 514); // Ctrl-Down
-  add_keyseq("Oc", MKEY_EQUIV, 518); // Ctrl-Right
-  add_keyseq("Od", MKEY_EQUIV, 516); // Ctrl-Left
-  add_keyseq("[a", MKEY_EQUIV, 520); // Shift-Up
-  add_keyseq("[b", MKEY_EQUIV, 513); // Shift-Down
-  add_keyseq("[c", MKEY_EQUIV, 402); // Shift-Right
-  add_keyseq("[d", MKEY_EQUIV, 393); // Shift-Left
-  add_keyseq("[5$", MKEY_SHIFT_PGUP, 0);   // Shift-PageUp
-  add_keyseq("[6$", MKEY_SHIFT_PGDOWN, 0); // Shift-PageDown
+  add_keyseq("Oa", KMOD_CTRL, KN_UP);
+  add_keyseq("Ob", KMOD_CTRL, KN_DOWN);
+  add_keyseq("Oc", KMOD_CTRL, KN_RIGHT);
+  add_keyseq("Od", KMOD_CTRL, KN_LEFT);
+  add_keyseq("[a", KMOD_SHIFT, KN_UP);
+  add_keyseq("[b", KMOD_SHIFT, KN_DOWN);
+  add_keyseq("[c", KMOD_SHIFT, KN_RIGHT);
+  add_keyseq("[d", KMOD_SHIFT, KN_LEFT);
 
-  // VT100
-  add_keyseq("[H", MKEY_EQUIV, KEY_HOME); // Home
-  add_keyseq("[F", MKEY_EQUIV, KEY_END);  // End
+  // SS3 sequences, when ncurses doesn't know them
+  add_keyseq("OA", 0, KN_UP);
+  add_keyseq("OB", 0, KN_DOWN);
+  add_keyseq("OC", 0, KN_RIGHT);
+  add_keyseq("OD", 0, KN_LEFT);
+  add_keyseq("OH", 0, KN_HOME);
+  add_keyseq("OF", 0, KN_END);
+  add_keyseq("OP", 0, KN_F(1));
+  add_keyseq("OQ", 0, KN_F(2));
+  add_keyseq("OR", 0, KN_F(3));
+  add_keyseq("OS", 0, KN_F(4));
+  add_keyseq("OM", 0, KN_ENTER);
+}
 
-  // Konsole Linux
-  add_keyseq("[1~", MKEY_EQUIV, KEY_HOME); // Home
-  add_keyseq("[4~", MKEY_EQUIV, KEY_END);  // End
+//  scr_bind_key(name, command)
+// Bind a command line to a key (given by its name, like "Alt+j").
+// command == NULL removes the binding.  Returns FALSE if the key name
+// cannot be parsed.
+gboolean scr_bind_key(const char *name, const char *command, GError **err)
+{
+  gchar *canon = key_canonicalize(name, NULL);
+  if (!canon) {
+    // Maybe an old-style key code ("M106", "265"...)
+    keyspec_t k;
+    if (!key_from_legacy(name, &k)) {
+      g_free(key_canonicalize(name, err)); // Sets the error
+      return FALSE;
+    }
+    canon = key_format(&k);
+  }
+  if (command)
+    settings_set(SETTINGS_TYPE_BINDING, canon, command);
+  else
+    settings_del(SETTINGS_TYPE_BINDING, canon);
+  g_free(canon);
+  return TRUE;
 }
 
 //  scr_init_bindings()
 // Create default key bindings
-// Return 0 if error and 1 if none
 void scr_init_bindings(void)
 {
-  GString *sbuf = g_string_new("");
+  static const struct { const char *key, *cmd; } defaults[] = {
+    { "Backspace",  "iline char_bdel" },
+    { "Ctrl+h",     "iline char_bdel" },
+    { "Del",        "iline char_fdel" },
+    { "Left",       "iline bchar" },
+    { "Right",      "iline fchar" },
+    { "Ctrl+g",     "iline compl_cancel" },
+    { "Up",         "iline hist_beginning_search_bwd" },
+    { "Down",       "iline hist_beginning_search_fwd" },
+    { "PgUp",       "roster up" },
+    { "PgDn",       "roster down" },
+    { "Home",       "iline iline_start" },
+    { "Ctrl+a",     "iline iline_start" },
+    { "End",        "iline iline_end" },
+    { "Ctrl+e",     "iline iline_end" },
+    { "Ctrl+o",     "iline iline_accept_down_hist" },
+    { "Ctrl+u",     "iline iline_bdel" },
+    { "Ctrl+k",     "iline iline_fdel" },
+    { "Ctrl+p",     "buffer up" },
+    { "Ctrl+n",     "buffer down" },
+    { "Ctrl+t",     "iline char_swap" },
+    { "Ctrl+w",     "iline word_bdel" },
+    { "Alt+b",      "iline bword" },
+    { "Ctrl+Left",  "iline bword" },
+    { "Alt+f",      "iline fword" },
+    { "Ctrl+Right", "iline fword" },
+    { "Alt+d",      "iline word_fdel" },
+    { "Ctrl+l",     "screen_refresh" },
+    { "Esc",        "chat_disable --show-roster" },
+    { "Alt+Esc",    "chat_disable" },
+    { "Ctrl+d",     "iline send_multiline" },
+    { "Alt+u",      "iline word_upcase" },
+    { "Alt+l",      "iline word_downcase" },
+    { "Alt+c",      "iline word_capit" },
+    { "F1",         "help" },
+    { NULL, NULL }
+  };
+  int i;
 
-  // Common backspace key codes: 8, 127
-  settings_set(SETTINGS_TYPE_BINDING, "8", "iline char_bdel");    // Ctrl-h
-  settings_set(SETTINGS_TYPE_BINDING, "127", "iline char_bdel");
-  g_string_printf(sbuf, "%d", KEY_BACKSPACE);
-  settings_set(SETTINGS_TYPE_BINDING, sbuf->str, "iline char_bdel");
-  g_string_printf(sbuf, "%d", KEY_DC);
-  settings_set(SETTINGS_TYPE_BINDING, sbuf->str, "iline char_fdel");
-  g_string_printf(sbuf, "%d", KEY_LEFT);
-  settings_set(SETTINGS_TYPE_BINDING, sbuf->str, "iline bchar");
-  g_string_printf(sbuf, "%d", KEY_RIGHT);
-  settings_set(SETTINGS_TYPE_BINDING, sbuf->str, "iline fchar");
-  settings_set(SETTINGS_TYPE_BINDING, "7", "iline compl_cancel"); // Ctrl-g
-  g_string_printf(sbuf, "%d", KEY_UP);
-  settings_set(SETTINGS_TYPE_BINDING, sbuf->str,
-               "iline hist_beginning_search_bwd");
-  g_string_printf(sbuf, "%d", KEY_DOWN);
-  settings_set(SETTINGS_TYPE_BINDING, sbuf->str,
-               "iline hist_beginning_search_fwd");
-  g_string_printf(sbuf, "%d", KEY_PPAGE);
-  settings_set(SETTINGS_TYPE_BINDING, sbuf->str, "roster up");
-  g_string_printf(sbuf, "%d", KEY_NPAGE);
-  settings_set(SETTINGS_TYPE_BINDING, sbuf->str, "roster down");
-  g_string_printf(sbuf, "%d", KEY_HOME);
-  settings_set(SETTINGS_TYPE_BINDING, sbuf->str, "iline iline_start");
-  settings_set(SETTINGS_TYPE_BINDING, "1", "iline iline_start");  // Ctrl-a
-  g_string_printf(sbuf, "%d", KEY_END);
-  settings_set(SETTINGS_TYPE_BINDING, sbuf->str, "iline iline_end");
-  settings_set(SETTINGS_TYPE_BINDING, "5", "iline iline_end");    // Ctrl-e
-  // Ctrl-o (accept-line-and-down-history):
-  settings_set(SETTINGS_TYPE_BINDING, "15", "iline iline_accept_down_hist");
-  settings_set(SETTINGS_TYPE_BINDING, "21", "iline iline_bdel");  // Ctrl-u
-  g_string_printf(sbuf, "%d", KEY_EOL);
-  settings_set(SETTINGS_TYPE_BINDING, sbuf->str, "iline iline_fdel");
-  settings_set(SETTINGS_TYPE_BINDING, "11", "iline iline_fdel");  // Ctrl-k
-  settings_set(SETTINGS_TYPE_BINDING, "16", "buffer up");         // Ctrl-p
-  settings_set(SETTINGS_TYPE_BINDING, "14", "buffer down");       // Ctrl-n
-  settings_set(SETTINGS_TYPE_BINDING, "20", "iline char_swap");   // Ctrl-t
-  settings_set(SETTINGS_TYPE_BINDING, "23", "iline word_bdel");   // Ctrl-w
-  settings_set(SETTINGS_TYPE_BINDING, "M98", "iline bword");      // Meta-b
-  settings_set(SETTINGS_TYPE_BINDING, "M102", "iline fword");     // Meta-f
-  settings_set(SETTINGS_TYPE_BINDING, "M100", "iline word_fdel"); // Meta-d
-  // Ctrl-Left  (2 codes):
-  settings_set(SETTINGS_TYPE_BINDING, "515", "iline bword");
-  settings_set(SETTINGS_TYPE_BINDING, "516", "iline bword");
-  // Ctrl-Right (2 codes):
-  settings_set(SETTINGS_TYPE_BINDING, "517", "iline fword");
-  settings_set(SETTINGS_TYPE_BINDING, "518", "iline fword");
-  settings_set(SETTINGS_TYPE_BINDING, "12", "screen_refresh");    // Ctrl-l
-  settings_set(SETTINGS_TYPE_BINDING, "27", "chat_disable --show-roster");// Esc
-  settings_set(SETTINGS_TYPE_BINDING, "M27", "chat_disable");     // Esc-Esc
-  settings_set(SETTINGS_TYPE_BINDING, "4", "iline send_multiline"); // Ctrl-d
-  settings_set(SETTINGS_TYPE_BINDING, "M117", "iline word_upcase"); // Meta-u
-  settings_set(SETTINGS_TYPE_BINDING, "M108", "iline word_downcase"); // Meta-l
-  settings_set(SETTINGS_TYPE_BINDING, "M99", "iline word_capit"); // Meta-c
-
-  settings_set(SETTINGS_TYPE_BINDING, "265", "help"); // Bind F1 to help...
-
-  g_string_free(sbuf, TRUE);
+  for (i = 0; defaults[i].key; i++)
+    scr_bind_key(defaults[i].key, defaults[i].cmd, NULL);
 }
 
 //  is_speckey(key)
@@ -757,33 +754,8 @@ void scr_init_bindings(void)
 // isprint(KEY_PPAGE) returns TRUE...
 static int is_speckey(int key)
 {
-  switch (key) {
-    case 127:
-    case 393:
-    case 402:
-    case KEY_BACKSPACE:
-    case KEY_DC:
-    case KEY_LEFT:
-    case KEY_RIGHT:
-    case KEY_UP:
-    case KEY_DOWN:
-    case KEY_PPAGE:
-    case KEY_NPAGE:
-    case KEY_HOME:
-    case KEY_END:
-    case KEY_EOL:
-        return TRUE;
-  }
-
-  // Fn keys
-  if (key >= 265 && key < 265+12)
-    return TRUE;
-
-  // Special key combinations
-  if (key >= 513 && key <= 521)
-    return TRUE;
-
-  return FALSE;
+  // ncurses key codes (KEY_*, function keys, run-time defined keys)
+  return key == 127 || key >= KEY_MIN;
 }
 
 void scr_init_locale_charset(void)
@@ -4264,7 +4236,7 @@ void scr_handle_CtrlC(void)
   refresh_inputline();
 }
 
-static void add_keyseq(char *seqstr, guint mkeycode, gint value)
+static void add_keyseq(char *seqstr, guint mods, gint key)
 {
   keyseq_t *ks;
 
@@ -4276,8 +4248,8 @@ static void add_keyseq(char *seqstr, guint mkeycode, gint value)
 
   ks = g_new0(keyseq_t, 1);
   ks->seqstr = g_strdup(seqstr);
-  ks->mkeycode = mkeycode;
-  ks->value = value;
+  ks->spec.mods = mods;
+  ks->spec.key = key;
   keyseqlist = g_slist_append(keyseqlist, ks);
 }
 
@@ -4286,8 +4258,8 @@ static void add_keyseq(char *seqstr, guint mkeycode, gint value)
 // Return value:
 // -1  if "seq" matches no known sequence
 //  0  if "seq" could match 1 or more known sequences
-// >0  if "seq" matches a key sequence; the mkey code is returned
-//     and *ret is set to the matching keyseq structure.
+//  1  if "seq" matches a key sequence; *ret is set to the matching
+//     keyseq structure.
 static inline gint match_keyseq(int *iseq, keyseq_t **ret)
 {
   GSList *ksl;
@@ -4304,7 +4276,7 @@ static inline gint match_keyseq(int *iseq, keyseq_t **ret)
       c = (unsigned char)*i;
       if (!*p && !c) { // Match
         (*ret) = ksp;
-        return ksp->mkeycode;
+        return 1;
       }
       if (!c) {
         // iseq is too short
@@ -4321,6 +4293,32 @@ static inline gint match_keyseq(int *iseq, keyseq_t **ret)
   if (needmore)
     return 0;
   return -1;
+}
+
+//  match_csi(iseq, len, spec)
+// Generic decoding of "[" params final.
+// Return value: -1 if this isn't a known CSI sequence, 0 if more
+// characters are needed, 1 if spec has been set.
+static gint match_csi(const int *iseq, int len, keyspec_t *spec)
+{
+  char params[MAX_KEYSEQ_LENGTH+1];
+  int i, last;
+
+  if (len < 2 || iseq[0] != '[')
+    return -1;
+  for (i = 1; i < len - 1; i++) {
+    int c = iseq[i];
+    if (!(g_ascii_isdigit(c) || c == ';' || c == ':'))
+      return -1;
+    params[i-1] = c;
+  }
+  params[len-2] = '\0';
+  last = iseq[len-1];
+  if (g_ascii_isdigit(last) || last == ';' || last == ':')
+    return 0;
+  if (last < 0x40 || last > 0x7e)
+    return -1;
+  return key_from_csi(params, last, spec) ? 1 : -1;
 }
 
 static inline int match_utf8_keyseq(int *iseq)
@@ -4392,7 +4390,7 @@ void scr_getch(keycode_t *kcode)
     }
     while (i > 0)
       ungetch(ks[i--]);
-    if (ismeta)
+    if (ismeta && ks[0] != ERR)
       ungetch(ks[0]);
     memset(ks,  0, sizeof(ks));
   }
@@ -4401,20 +4399,27 @@ void scr_getch(keycode_t *kcode)
 
   // Check for escape key sequence
   for (i=0; i < MAX_KEYSEQ_LENGTH; i++) {
-    int match;
+    int match, csi;
+    keyspec_t spec;
     ks[i] = wgetch(inputWnd);
     if (ks[i] == ERR) break;
     match = match_keyseq(ks, &mks);
-    if (match == -1) {
+    if (match > 0) {
+      // We have a matching sequence
+      kcode->mcode = MKEY_SPEC;
+      kcode->spec = mks->spec;
+      return;
+    }
+    csi = match_csi(ks, i+1, &spec);
+    if (csi > 0) {
+      kcode->mcode = MKEY_SPEC;
+      kcode->spec = spec;
+      return;
+    }
+    if (match == -1 && csi == -1) {
       // No such key sequence.  Let's increment i as it is a valid key.
       i++;
       break;
-    }
-    if (match > 0) {
-      // We have a matching sequence
-      kcode->mcode = mks->mkeycode;
-      kcode->value = mks->value;
-      return;
     }
   }
 
@@ -4438,36 +4443,77 @@ void scr_do_update(void)
   doupdate();
 }
 
+//  keycode_to_spec(kcode, spec)
+// Get the key combination for a key read by scr_getch().
+static void keycode_to_spec(const keycode_t *kcode, keyspec_t *spec)
+{
+  memset(spec, 0, sizeof(*spec));
+
+  switch (kcode->mcode) {
+    case MKEY_SPEC:
+        *spec = kcode->spec;
+        return;
+    case MKEY_MOUSE:
+#ifdef NCURSES_MOUSE_VERSION
+        if (kcode->value & BUTTON4_PRESSED)
+          spec->key = KN_WHEELUP;
+# ifdef BUTTON5_PRESSED
+        else if (kcode->value & BUTTON5_PRESSED)
+          spec->key = KN_WHEELDOWN;
+# endif
+        else
+#endif
+        {
+          spec->key = KN_MOUSE;
+          spec->raw = kcode->value;
+        }
+        return;
+    default:
+        break;
+  }
+
+  if (kcode->utf8)
+    spec->key = kcode->value;
+  else if (kcode->value > KEY_MAX)
+    // Extended keys are defined at run time by ncurses
+    (void)(key_from_terminfo_name(keyname(kcode->value), spec) ||
+           key_from_ncurses(kcode->value, spec));
+  else
+    key_from_ncurses(kcode->value, spec);
+
+  if (kcode->mcode == MKEY_META)
+    spec->mods |= KMOD_ALT;
+  key_normalize(spec);
+}
+
+//  scr_keycode_name(kcode)
+// Return the name of the key combination (to be freed by the caller).
+gchar *scr_keycode_name(const keycode_t *kcode)
+{
+  keyspec_t spec;
+  keycode_to_spec(kcode, &spec);
+  return key_format(&spec);
+}
+
 static void bindcommand(keycode_t kcode)
 {
-  gchar asciikey[16], asciicode[16];
+  gchar *keyname;
   const gchar *boundcmd;
 
-  if (kcode.utf8)
-    g_snprintf(asciicode, 15, "U%d", kcode.value);
-  else
-    g_snprintf(asciicode, 15, "%d", kcode.value);
-
-  if (!kcode.mcode || kcode.mcode == MKEY_EQUIV)
-    g_snprintf(asciikey, 15, "%s", asciicode);
-  else if (kcode.mcode == MKEY_META)
-    g_snprintf(asciikey, 15, "M%s", asciicode);
-  else if (kcode.mcode == MKEY_MOUSE)
-    g_snprintf(asciikey, 15, "p%s", asciicode);
-  else
-    g_snprintf(asciikey, 15, "MK%d", kcode.mcode);
-
-  boundcmd = settings_get(SETTINGS_TYPE_BINDING, asciikey);
+  keyname = scr_keycode_name(&kcode);
+  boundcmd = settings_get(SETTINGS_TYPE_BINDING, keyname);
 
   if (boundcmd) {
     gchar *cmdline = from_utf8(boundcmd);
     scr_check_auto_away(TRUE);
     process_command(cmdline, TRUE);
     g_free(cmdline);
+    g_free(keyname);
     return;
   }
 
-  scr_LogPrint(LPRINT_NORMAL, "Unknown key=%s", asciikey);
+  scr_LogPrint(LPRINT_NORMAL, "Unknown key: %s", keyname);
+  g_free(keyname);
 #ifndef UNICODE
   if (utf8_mode)
     scr_LogPrint(LPRINT_NORMAL,
@@ -4532,17 +4578,9 @@ void scr_process_key(keycode_t kcode)
 
   lock_chatstate = FALSE;
 
-  switch (kcode.mcode) {
-    case 0:
-        // key = kcode.value;
-        break;
-    case MKEY_EQUIV:
-        // key = kcode.value;
-        break;
-    case MKEY_META:
-    default:
-        bindcommand(kcode);
-        key = ERR; // Do not process any further
+  if (kcode.mcode) {
+    bindcommand(kcode);
+    key = ERR; // Do not process any further
   }
 
   if (vi_mode && !chatmode) {
