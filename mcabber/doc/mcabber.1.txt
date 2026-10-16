@@ -764,6 +764,46 @@ The default format is:
       info = "{time:%H:%M}            * ",
     }
 
+USER INTERFACE
+--------------
+Frames::
+        The 'ui_borders' option draws frames around the windows: "rounded",
+        "single", "double", "heavy", "ascii" or "none" (default).  The titles
+        of the roster and log frames are set by 'ui_title_roster' and
+        'ui_title_log'; the chat status line is displayed in the frame above
+        the chat window.  Changes are applied by /screen_refresh (Ctrl-l).
+
+Roster and status lines::
+        mc.format.roster (a template, or a table of templates for
+        "contact", "room", "group" and "special" items, or a function),
+        mc.format.chat_status and mc.format.main_status change the roster
+        items and the status lines (see MESSAGE FORMAT for the templates;
+        {name:*} uses the available width and {>} aligns the rest on the
+        right).  mc.format.icons is a table of status icons (online, free,
+        away, notavail, dnd, invisible, offline, unknown, room, room_out).
+
+        Roster fields: name, jid, status, status_char, icon, pending (the
+        "#", "+", "." or attention sign), unread (count), count (members of
+        a folded group), type, selected, folded, msg, composing, paused,
+        sub_from, sub_to.
+
+        Chat status fields: name, jid, resource, type, type_name, status,
+        status_char, icon, msg (status message or room topic), chatstate
+        (active, composing, paused, inactive, gone), chatmode, locked,
+        unread.
+
+        Main status fields: unread (sign), status, status_char, icon, info,
+        msg, jid.
+
+        Style names can contain fields: {#status_$status} uses the
+        status_online, status_away... styles.
+
+Themes::
+        Two themes are provided: mc.theme(require "mcabber.themes.modern")
+        and mc.theme(require "mcabber.themes.classic").  A theme is a Lua
+        table of styles, with 'options' and 'format' sections (see STYLES AND
+        THEMES); it can be written in <config dir>/lua/.
+
 STYLES AND THEMES
 -----------------
 Colors and text attributes are defined by styles:

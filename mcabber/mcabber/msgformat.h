@@ -14,6 +14,12 @@ void   msgfmt_head(time_t timestamp, guint flags, const char *nick,
                    sstr_t *out);
 gchar *msgfmt_head_text(time_t timestamp, guint flags, const char *nick);
 
+gboolean msgfmt_ui_has(const char *name);
+gboolean msgfmt_ui(const char *name, const char *kind,
+                   const char *const *fields, fmt_getter_t getter,
+                   gpointer data, guint width, sstr_t *out);
+gchar   *msgfmt_icon(const char *key);
+
 #endif /* __MCABBER_MSGFORMAT_H__ */
 
 /* vim: set et cindent cinoptions=>2\:2(0 ts=2 sw=2:  For Vim users... */

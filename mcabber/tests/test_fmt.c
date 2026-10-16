@@ -93,6 +93,14 @@ static void test_styles(void)
   g_assert_cmpuint(r->start, ==, 6);
   g_free(t);
   sstr_free(s);
+
+  t = render("{#c_$nick}x{#c_$missing}y", 0, &s);
+  r = &g_array_index(s->runs, srun_t, 0);
+  g_assert_cmpstr(r->style, ==, "c_bob");
+  r = &g_array_index(s->runs, srun_t, 1);
+  g_assert_cmpstr(r->style, ==, "c_");
+  g_free(t);
+  sstr_free(s);
 }
 
 static void test_width(void)
@@ -100,6 +108,7 @@ static void test_width(void)
   // Right alignment
   check("{nick}{>}[{n}]", 12, "bob      [3]");
   check("{nick}{>}[{n}]", 0, "bob[3]");
+  check("{nick}{>}{missing}", 12, "bob");
   // Flexible field
   check("<{long:*}>", 6, "<abc…>");
   check("<{long:*}>", 20, "<abcdefgh>");

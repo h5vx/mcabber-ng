@@ -403,6 +403,100 @@ static void head_size(time_t timestamp, guint flags, const char *nick,
   }
 }
 
+/* -- Other formats of the interface (roster, status lines) -- */
+
+//  msgfmt_ui_has(name)
+// TRUE if mc.format[name] is set.
+gboolean msgfmt_ui_has(const char *name)
+{
+  lua_State *L = push_format(name);
+  gboolean set;
+  if (!L)
+    return FALSE;
+  set = !lua_isnil(L, -1) &&
+        !(lua_isboolean(L, -1) && !lua_toboolean(L, -1));
+  lua_pop(L, 1);
+  return set;
+}
+
+//  msgfmt_ui(name, kind, fields, getter, data, width, out)
+// Render mc.format[name]: a template, a table of templates per kind (or
+// "default"), or a function receiving a table with the fields and the
+// width.  Returns FALSE if nothing has been rendered.
+gboolean msgfmt_ui(const char *name, const char *kind,
+                   const char *const *fields, fmt_getter_t getter,
+                   gpointer data, guint width, sstr_t *out)
+{
+  lua_State *L = push_format(name);
+  gboolean done = FALSE;
+  int top;
+
+  if (!L)
+    return FALSE;
+  top = lua_gettop(L);
+
+  if (lua_istable(L, -1)) {
+    lua_getfield(L, -1, kind ? kind : "default");
+    if (lua_isnil(L, -1)) {
+      lua_pop(L, 1);
+      lua_getfield(L, -1, "default");
+    }
+    lua_remove(L, -2);
+  }
+
+  if (lua_type(L, -1) == LUA_TSTRING) {
+    const fmt_t *f = compiled_template(lua_tostring(L, -1));
+    if (f) {
+      fmt_render(f, getter, data, width, out);
+      done = TRUE;
+    }
+  } else if (lua_isfunction(L, -1)) {
+    const char *const *fld;
+    gchar *ctx = g_strdup_printf("mc.format.%s", name);
+    lua_newtable(L);
+    for (fld = fields; *fld; fld++) {
+      gchar *v = getter(*fld, NULL, data);
+      if (v) {
+        if (!strcmp(v, "1"))
+          lua_pushboolean(L, TRUE);
+        else
+          lua_pushstring(L, v);
+        lua_setfield(L, -2, *fld);
+        g_free(v);
+      }
+    }
+    if (kind) {
+      lua_pushstring(L, kind);
+      lua_setfield(L, -2, "kind");
+    }
+    lua_pushinteger(L, width);
+    if (!mlua_pcall(L, 2, 1, ctx))
+      done = append_lua_result(L, -1, out);
+    g_free(ctx);
+  }
+  lua_settop(L, top - 1);
+  return done;
+}
+
+//  msgfmt_icon(key)
+// mc.format.icons[key] (newly allocated), or NULL.
+gchar *msgfmt_icon(const char *key)
+{
+  lua_State *L = push_format("icons");
+  gchar *icon = NULL;
+
+  if (!L)
+    return NULL;
+  if (lua_istable(L, -1)) {
+    lua_getfield(L, -1, key);
+    if (lua_type(L, -1) == LUA_TSTRING)
+      icon = g_strdup(lua_tostring(L, -1));
+    lua_pop(L, 1);
+  }
+  lua_pop(L, 1);
+  return icon;
+}
+
 void msgfmt_init(void)
 {
   hbuf_set_head_func(head_size);

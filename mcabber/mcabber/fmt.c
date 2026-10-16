@@ -367,6 +367,38 @@ static gchar *format_value(const op_t *op, gchar *value)
   }
 }
 
+//  expand_style(name, getter, data)
+// Replace "$field" in a style name by the value of the field.
+static const char *expand_style(const char *name, fmt_getter_t getter,
+                                gpointer data)
+{
+  GString *res;
+  const char *p, *interned;
+
+  if (!strchr(name, '$'))
+    return g_intern_string(name);
+  res = g_string_new(NULL);
+  for (p = name; *p; ) {
+    if (*p == '$') {
+      const char *start = ++p;
+      gchar *field, *v;
+      while (g_ascii_isalnum(*p) || *p == '_')
+        p++;
+      field = g_strndup(start, p - start);
+      v = getter(field, NULL, data);
+      if (v)
+        g_string_append(res, v);
+      g_free(v);
+      g_free(field);
+    } else {
+      g_string_append_c(res, *p++);
+    }
+  }
+  interned = g_intern_string(res->str);
+  g_string_free(res, TRUE);
+  return interned;
+}
+
 static gboolean is_set(const char *v)
 {
   return v && *v && strcmp(v, "0");
@@ -408,7 +440,7 @@ void fmt_render(const fmt_t *f, fmt_getter_t getter, gpointer data,
         }
           continue;
       case OP_STYLE:
-          style = op->str ? g_intern_string(op->str) : NULL;
+          style = op->str ? expand_style(op->str, getter, data) : NULL;
           continue;
       case OP_RIGHT:
           if (right_at < 0)
@@ -446,6 +478,15 @@ void fmt_render(const fmt_t *f, fmt_getter_t getter, gpointer data,
       total = 0;
       for (i = 0; i < pieces->len; i++)
         total += fmt_text_width(g_array_index(pieces, piece_t, i).text, -1);
+    }
+    // Is there something after {>}?
+    if (right_at >= 0) {
+      gboolean tail = FALSE;
+      for (i = right_at; i < pieces->len; i++)
+        if (*g_array_index(pieces, piece_t, i).text)
+          tail = TRUE;
+      if (!tail)
+        right_at = -1;
     }
     if (right_at >= 0 && total < width) {
       // Push the text after {>} to the right

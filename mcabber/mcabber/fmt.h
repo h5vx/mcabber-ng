@@ -12,7 +12,9 @@
  *                      {time:%H:%M}
  *   {?field}...{/}     the text is used only if the field is set (not
  *                      empty, not "0");  {!field}...{/} if it is not set
- *   {#style}           following text uses this style;  {#} default style
+ *   {#style}           following text uses this style;  {#} default style.
+ *                      "$field" in the name is replaced by the value of the
+ *                      field: {#status_$status}
  *   {>}                the following text is aligned on the right
  *   {{ }}              literal braces
  */

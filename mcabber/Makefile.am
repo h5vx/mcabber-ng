@@ -7,3 +7,8 @@ endif
 
 # Sample configuration file
 dist_pkgdata_DATA = init.lua.example
+
+# Lua modules: themes
+luathemedir = $(pkgdatadir)/lua/mcabber/themes
+dist_luatheme_DATA = lua/mcabber/themes/classic.lua \
+		     lua/mcabber/themes/modern.lua

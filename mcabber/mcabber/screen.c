@@ -134,6 +134,8 @@ static WINDOW *mainstatusWnd, *chatstatusWnd;
 static PANEL *rosterPanel, *chatPanel, *activechatPanel, *inputPanel;
 static PANEL *mainstatusPanel, *chatstatusPanel;
 static PANEL *logPanel;
+static WINDOW *frameWnd;      // Frames (ui_borders), behind the other windows
+static PANEL *framePanel;
 static int maxY, maxX;
 static int prev_chatwidth;
 static winbuf_t *statusWindow;
@@ -497,6 +499,11 @@ static const struct {
   { "status_dnd",       "red" },
   { "status_invisible", "dim" },
   { "status_offline",   "dim" },
+  { "status_unknown",   "dim" },
+  { "status_room",      "magenta" },
+  { "status_room_out",  "dim" },
+  { "dim",              "dim" },
+  { "accent",           "blue" },
   { "input",            "" },
   { "input_prompt",     "bold" },
   { NULL, NULL }
@@ -1373,10 +1380,9 @@ static gboolean nick_color(const char *nick, guint flags, int *attr)
   return FALSE;
 }
 
-//  style_attr(style, line_color, nick, flags)
-// Attributes for a style name used in a format.
-static int style_attr(const char *style, int line_color, const char *nick,
-                      guint flags)
+//  internal_style(name)
+// Internal color (COLOR_*) of a style name, or -1.
+static int internal_style(const char *name)
 {
   static const struct { const char *name; int color; } styles[] = {
     { "general",      COLOR_GENERAL },
@@ -1394,18 +1400,84 @@ static int style_attr(const char *style, int line_color, const char *nick,
     { "timestamp",    COLOR_TIMESTAMP },
     { NULL, 0 }
   };
-  int i, attr;
+  int i;
+  for (i = 0; styles[i].name; i++)
+    if (!strcmp(name, styles[i].name))
+      return styles[i].color;
+  return -1;
+}
+
+//  style_attr(style, line_color, nick, flags)
+// Attributes for a style name used in a message format.
+static int style_attr(const char *style, int line_color, const char *nick,
+                      guint flags)
+{
+  int color, attr;
 
   if (!style)
     return get_color(line_color);
   if (!strcmp(style, "nick"))
     return nick_color(nick, flags, &attr) ? attr : (int)get_color(line_color);
-  for (i = 0; styles[i].name; i++)
-    if (!strcmp(style, styles[i].name))
-      return get_color(styles[i].color);
+  color = internal_style(style);
+  if (color >= 0)
+    return get_color(color);
   if (custom_style_attr(style, &attr))
     return attr;
   return get_color(line_color);
+}
+
+//  run_attr(style, base)
+// Attributes for a style of a format (roster, status lines).
+static int run_attr(const char *style, int base)
+{
+  int color, attr;
+
+  if (!style)
+    return base;
+  color = internal_style(style);
+  if (color >= 0)
+    return get_color(color);
+  if (custom_style_attr(style, &attr))
+    return attr;
+  return base;
+}
+
+//  draw_sstr(win, s, base, plain, max)
+// Draw a styled string at the cursor position (with the base attributes
+// only if plain is TRUE), on at most max cells.
+static void draw_sstr(WINDOW *win, const sstr_t *s, int base, gboolean plain,
+                      int max)
+{
+  guint r;
+  int used = 0;
+
+  for (r = 0; r < s->runs->len; r++) {
+    srun_t *run = &g_array_index(s->runs, srun_t, r);
+    const char *p = s->text->str + run->start;
+    const char *end = p + run->len;
+    wattrset(win, plain ? base : run_attr(run->style, base));
+    while (p < end) {
+      const char *next = next_char((char *)p);
+      int w = get_char_width(p);
+      if (w < 0)
+        w = 1;
+      if (used + w > max)
+        goto done;
+      waddnstr(win, p, next - p);
+      used += w;
+      p = next;
+    }
+  }
+done:
+  wattrset(win, base);
+}
+
+//  status_icon(status, def)
+// Icon of a status (mc.format.icons), or the given character.
+static gchar *status_icon(const char *status, char def)
+{
+  gchar *icon = msgfmt_icon(status);
+  return icon ? icon : g_strdup_printf("%c", def);
 }
 
 //  scr_update_window()
@@ -1791,6 +1863,44 @@ static unsigned int attention_sign(void)
 // Redraw the main (bottom) status line.
 // You can set forceupdate to FALSE in order to optimize screen refresh
 // if you call top_panel()/update_panels() later.
+typedef struct {
+  guint unread;         // Unread/attention character (or ' ')
+  const char *info;
+  const char *msg;
+} main_status_t;
+
+static const char *const main_status_fields[] = {
+  "unread", "status", "status_char", "icon", "info", "msg", "jid", NULL
+};
+
+static gchar *main_status_field(const char *name, const char *arg,
+                                gpointer data)
+{
+  main_status_t *ms = data;
+  enum imstatus st = xmpp_getstatus();
+
+  if (!strcmp(name, "unread")) {
+    gchar buf[8] = { 0 };
+    if (ms->unread == ' ')
+      return NULL;
+    g_unichar_to_utf8(ms->unread, buf);
+    return g_strdup(buf);
+  }
+  if (!strcmp(name, "status"))
+    return g_strdup(mlua_status_name(st));
+  if (!strcmp(name, "status_char"))
+    return g_strdup_printf("%c", imstatus2char[st]);
+  if (!strcmp(name, "icon"))
+    return status_icon(mlua_status_name(st), imstatus2char[st]);
+  if (!strcmp(name, "info"))
+    return g_strdup(ms->info);
+  if (!strcmp(name, "msg"))
+    return (ms->msg && *ms->msg) ? g_strdup(ms->msg) : NULL;
+  if (!strcmp(name, "jid"))
+    return g_strdup(settings_opt_get("jid"));
+  return NULL;
+}
+
 void scr_update_main_status(int forceupdate)
 {
   char *sm = from_utf8(xmpp_getstatusmsg());
@@ -1817,6 +1927,22 @@ void scr_update_main_status(int forceupdate)
     unreadchar = ' ';
 
   werase(mainstatusWnd);
+  if (msgfmt_ui_has("main_status")) {
+    main_status_t ms;
+    sstr_t *line = sstr_new();
+    ms.unread = unreadchar;
+    ms.info = info;
+    ms.msg = sm;
+    if (msgfmt_ui("main_status", NULL, main_status_fields, main_status_field,
+                  &ms, getmaxx(mainstatusWnd), line)) {
+      wmove(mainstatusWnd, 0, 0);
+      draw_sstr(mainstatusWnd, line, getbkgd(mainstatusWnd) & A_ATTRIBUTES,
+                FALSE, getmaxx(mainstatusWnd));
+      sstr_free(line);
+      goto main_status_done;
+    }
+    sstr_free(line);
+  }
   if (info) {
     char *info_locale = from_utf8(info);
     mvwprintw(mainstatusWnd, 0, 0, "%lc[%c] %s %s", unreadchar,
@@ -1826,11 +1952,142 @@ void scr_update_main_status(int forceupdate)
   } else
     mvwprintw(mainstatusWnd, 0, 0, "%lc[%c] %s", unreadchar,
               imstatus2char[xmpp_getstatus()], (sm ? sm : ""));
+main_status_done:
   if (forceupdate) {
     top_panel(inputPanel);
     update_panels();
   }
   g_free(sm);
+}
+
+/* -- Frames -- */
+
+typedef struct {
+  const char *name;
+  const char *h, *v, *tl, *tr, *bl, *br, *lt, *rt, *tt, *bt;
+} frame_chars_t;
+
+static const frame_chars_t frame_sets[] = {
+  { "ascii",   "-", "|", "+", "+", "+", "+", "+", "+", "+", "+" },
+  { "single",  "\u2500", "\u2502", "\u250c", "\u2510", "\u2514", "\u2518",
+               "\u251c", "\u2524", "\u252c", "\u2534" },
+  { "rounded", "\u2500", "\u2502", "\u256d", "\u256e", "\u2570", "\u256f",
+               "\u251c", "\u2524", "\u252c", "\u2534" },
+  { "double",  "\u2550", "\u2551", "\u2554", "\u2557", "\u255a", "\u255d",
+               "\u2560", "\u2563", "\u2566", "\u2569" },
+  { "heavy",   "\u2501", "\u2503", "\u250f", "\u2513", "\u2517", "\u251b",
+               "\u2523", "\u252b", "\u2533", "\u253b" },
+  { NULL }
+};
+
+//  frame_chars()
+// Characters of the frames (ui_borders option), or NULL if there is none.
+static const frame_chars_t *frame_chars(void)
+{
+  const char *opt = settings_opt_get("ui_borders");
+  int i;
+
+  if (!opt || !*opt || !strcmp(opt, "none") || !strcmp(opt, "0"))
+    return NULL;
+  if (!utf8_mode)
+    return &frame_sets[0];
+  for (i = 0; frame_sets[i].name; i++)
+    if (!strcmp(opt, frame_sets[i].name))
+      return &frame_sets[i];
+  return &frame_sets[2];  // rounded
+}
+
+static int named_style_attr(const char *name, int fallback)
+{
+  int attr;
+  if (custom_style_attr(name, &attr))
+    return attr;
+  return get_color(fallback);
+}
+
+//  fill_hline(win, y, x, n)
+// Draw a horizontal frame line.
+static void fill_hline(WINDOW *win, int y, int x, int n)
+{
+  const frame_chars_t *fc = frame_chars();
+  int i;
+  if (!fc)
+    return;
+  wmove(win, y, x);
+  for (i = 0; i < n; i++)
+    waddstr(win, fc->h);
+}
+
+static void draw_title(int y, int x, int maxw, const char *option,
+                       const char *def)
+{
+  const char *title = settings_opt_get(option);
+  gchar *t, *tl;
+
+  if (!title)
+    title = def;
+  if (!*title || maxw < 5)
+    return;
+  t = g_strdup_printf(" %s ", title);
+  tl = from_utf8(t);
+  wattrset(frameWnd, named_style_attr("title", COLOR_GENERAL));
+  mvwaddnstr(frameWnd, y, x, tl ? tl : t, maxw);
+  g_free(t);
+  g_free(tl);
+}
+
+//  draw_frames()
+// Draw the frames around the windows (see layout_borders()).
+static void draw_frames(void)
+{
+  const frame_chars_t *fc = frame_chars();
+  const ui_layout_t *l = &Layout;
+  int y, x;
+  int chat_top = l->chat.y, chat_bot = l->chat.y + l->chat.h - 1;
+
+  werase(frameWnd);
+  if (!fc || !l->borders)
+    return;
+
+  wattrset(frameWnd, named_style_attr("border", COLOR_GENERAL));
+
+  // Horizontal lines
+  for (y = l->frame_top; y <= l->frame_bottom; y++) {
+    const char *left, *right;
+    if (y == l->frame_top) {
+      left = fc->tl; right = fc->tr;
+    } else if (y == l->frame_bottom) {
+      left = fc->bl; right = fc->br;
+    } else if (y == l->frame_mid) {
+      left = fc->lt; right = fc->rt;
+    } else {
+      // Vertical lines
+      mvwaddstr(frameWnd, y, l->frame_left, fc->v);
+      mvwaddstr(frameWnd, y, l->frame_right, fc->v);
+      if (l->frame_vsep >= 0 && y >= chat_top && y <= chat_bot)
+        mvwaddstr(frameWnd, y, l->frame_vsep, fc->v);
+      continue;
+    }
+    mvwaddstr(frameWnd, y, l->frame_left, left);
+    for (x = l->frame_left + 1; x < l->frame_right; x++)
+      waddstr(frameWnd, fc->h);
+    waddstr(frameWnd, right);
+    // Junctions with the line between the roster and the chat window
+    if (l->frame_vsep >= 0) {
+      if (y == chat_top - 1)
+        mvwaddstr(frameWnd, y, l->frame_vsep, fc->tt);
+      else if (y == chat_bot + 1)
+        mvwaddstr(frameWnd, y, l->frame_vsep, fc->bt);
+    }
+  }
+
+  // Titles
+  if (l->roster.w > 6)
+    draw_title(l->roster.y - 1, l->roster.x + 1, l->roster.w - 2,
+               "ui_title_roster", "Roster");
+  if (l->log.h > 0)
+    draw_title(l->log.y - 1, l->log.x + 1, l->log.w - 2,
+               "ui_title_log", "Log");
 }
 
 //  scr_draw_main_window()
@@ -1874,6 +2131,7 @@ void scr_draw_main_window(unsigned int fullinit)
   lopts.log_on_top = log_win_on_top;
   lopts.roster_on_right = roster_win_on_right;
   lopts.input_height = Input_Win_Height;
+  lopts.borders = (frame_chars() != NULL);
   layout_compute(&lopts, &Layout);
   Log_Win_Height = Layout.log.h;
   Roster_Width = Layout.roster.w;
@@ -1887,6 +2145,7 @@ void scr_draw_main_window(unsigned int fullinit)
       winbufhash = g_hash_table_new_full(g_str_hash, g_str_equal,
                                          g_free, g_free);
     /* Create windows */
+    frameWnd  = newwin(maxY, maxX, 0, 0);
     rosterWnd = NEWWIN(Layout.roster);
     chatWnd   = NEWWIN(Layout.chat);
     activechatWnd = NEWWIN(Layout.chat);
@@ -1913,6 +2172,7 @@ void scr_draw_main_window(unsigned int fullinit)
     MOVEWIN(chatstatusWnd, Layout.chatstatus);
     MOVEWIN(mainstatusWnd, Layout.mainstatus);
     MOVEWIN(inputWnd, Layout.input);
+    wresize(frameWnd, maxY, maxX);
 
     werase(chatWnd);
   }
@@ -1940,6 +2200,7 @@ void scr_draw_main_window(unsigned int fullinit)
 #endif
 
     // Create panels
+    framePanel  = new_panel(frameWnd);
     rosterPanel = new_panel(rosterWnd);
     chatPanel   = new_panel(chatWnd);
     activechatPanel = new_panel(activechatWnd);
@@ -1965,6 +2226,7 @@ void scr_draw_main_window(unsigned int fullinit)
 #endif
   } else {
     // Update panels
+    replace_panel(framePanel, frameWnd);
     replace_panel(rosterPanel, rosterWnd);
     replace_panel(chatPanel, chatWnd);
     replace_panel(logPanel, logWnd);
@@ -1977,6 +2239,17 @@ void scr_draw_main_window(unsigned int fullinit)
     hide_panel(logPanel);
   } else {
     show_panel(logPanel);
+  }
+
+  // Frames are behind everything
+  if (Layout.borders) {
+    draw_frames();
+    show_panel(framePanel);
+    bottom_panel(framePanel);
+    wbkgd(chatstatusWnd, named_style_attr("title_active", COLOR_STATUS));
+  } else {
+    hide_panel(framePanel);
+    wbkgd(chatstatusWnd, get_color(COLOR_STATUS));
   }
 
   // We'll need to redraw the roster
@@ -2057,6 +2330,123 @@ void sigwinch_resize(void)
 //  scr_update_chat_status(forceupdate)
 // Redraw the buddy status bar.
 // Set forceupdate to TRUE if update_panels() must be called.
+/* -- Status lines formats (mc.format.chat_status, mc.format.main_status) -- */
+
+typedef struct {
+  gpointer bud;
+  guint btype;
+  char status;
+  const char *status_name;
+  const char *resource;
+  gchar *msg;
+  const char *chatstate;
+  gboolean locked;
+} chat_status_t;
+
+static const char *const chat_status_fields[] = {
+  "name", "jid", "resource", "type", "type_name", "status", "status_char",
+  "icon", "msg", "chatstate", "chatmode", "locked", "unread", NULL
+};
+
+static gchar *chat_status_field(const char *name, const char *arg,
+                                gpointer data)
+{
+  chat_status_t *cs = data;
+  guint t = cs->btype;
+
+  if (!strcmp(name, "name"))
+    return g_strdup(buddy_getname(cs->bud));
+  if (!strcmp(name, "jid"))
+    return g_strdup(buddy_getjid(cs->bud));
+  if (!strcmp(name, "resource"))
+    return g_strdup(cs->resource);
+  if (!strcmp(name, "type"))
+    return g_strdup((t & ROSTER_TYPE_USER) ? "user" :
+                    (t & ROSTER_TYPE_ROOM) ? "room" :
+                    (t & ROSTER_TYPE_AGENT) ? "agent" :
+                    (t & ROSTER_TYPE_GROUP) ? "group" : "special");
+  if (!strcmp(name, "type_name"))
+    return g_strdup((t & ROSTER_TYPE_USER) ? "Buddy" :
+                    (t & ROSTER_TYPE_ROOM) ? "Room" :
+                    (t & ROSTER_TYPE_AGENT) ? "Agent" :
+                    (t & ROSTER_TYPE_GROUP) ? "Group" : "Special buffer");
+  if (!strcmp(name, "status"))
+    return g_strdup(cs->status_name);
+  if (!strcmp(name, "status_char"))
+    return cs->status ? g_strdup_printf("%c", cs->status) : NULL;
+  if (!strcmp(name, "icon"))
+    return cs->status_name ? status_icon(cs->status_name, cs->status) : NULL;
+  if (!strcmp(name, "msg"))
+    return g_strdup(cs->msg);
+  if (!strcmp(name, "chatstate"))
+    return g_strdup(cs->chatstate);
+  if (!strcmp(name, "chatmode"))
+    return chatmode ? g_strdup("1") : NULL;
+  if (!strcmp(name, "locked"))
+    return cs->locked ? g_strdup("1") : NULL;
+  if (!strcmp(name, "unread"))
+    return (buddy_getflags(cs->bud) & ROSTER_FLAG_MSG) ? g_strdup("1") : NULL;
+  return NULL;
+}
+
+//  chat_status_format()
+// Draw the chat status line with mc.format.chat_status.  Returns FALSE if
+// it is not set.
+static gboolean chat_status_format(void)
+{
+  chat_status_t cs;
+  sstr_t *line;
+  gboolean done;
+  guint ev;
+
+  if (!msgfmt_ui_has("chat_status"))
+    return FALSE;
+
+  memset(&cs, 0, sizeof(cs));
+  cs.bud = BUDDATA(current_buddy);
+  cs.btype = buddy_gettype(cs.bud);
+  if (cs.btype & (ROSTER_TYPE_USER|ROSTER_TYPE_AGENT)) {
+    enum imstatus st;
+    cs.resource = buddy_getactiveresource(cs.bud);
+    st = buddy_getstatus(cs.bud, cs.resource);
+    cs.status = (xmpp_getstatus() != offline && st < imstatus_size) ?
+                imstatus2char[st] : '?';
+    cs.status_name = (xmpp_getstatus() != offline) ? mlua_status_name(st) :
+                     "unknown";
+    cs.msg = g_strdup(buddy_getstatusmsg(cs.bud, cs.resource));
+    ev = buddy_resource_getevents(cs.bud, cs.resource);
+    cs.chatstate = (ev == ROSTER_EVENT_ACTIVE) ? "active" :
+                   (ev == ROSTER_EVENT_COMPOSING) ? "composing" :
+                   (ev == ROSTER_EVENT_PAUSED) ? "paused" :
+                   (ev == ROSTER_EVENT_INACTIVE) ? "inactive" :
+                   (ev == ROSTER_EVENT_GONE) ? "gone" : NULL;
+  } else if (cs.btype & ROSTER_TYPE_ROOM) {
+    gboolean inside = buddy_getinsideroom(cs.bud) != 0;
+    cs.status = inside ? 'C' : 'x';
+    cs.status_name = inside ? "room" : "room_out";
+    cs.msg = g_strdup(buddy_gettopic(cs.bud));
+  }
+  if (cs.msg)
+    replace_nl_with_dots(cs.msg);
+  if (chatmode && !(cs.btype & ROSTER_TYPE_GROUP)) {
+    winbuf_t *win_entry = scr_search_window(buddy_getjid(cs.bud),
+                                            cs.btype & ROSTER_TYPE_SPECIAL);
+    cs.locked = win_entry && win_entry->bd->lock;
+  }
+
+  line = sstr_new();
+  done = msgfmt_ui("chat_status", NULL, chat_status_fields,
+                   chat_status_field, &cs, getmaxx(chatstatusWnd), line);
+  if (done) {
+    wmove(chatstatusWnd, 0, 0);
+    draw_sstr(chatstatusWnd, line, getbkgd(chatstatusWnd) & A_ATTRIBUTES,
+              FALSE, getmaxx(chatstatusWnd));
+  }
+  sstr_free(line);
+  g_free(cs.msg);
+  return done;
+}
+
 void scr_update_chat_status(int forceupdate)
 {
   unsigned short btype, isgrp, ismuc, isspe;
@@ -2074,11 +2464,23 @@ void scr_update_chat_status(int forceupdate)
 
   // Clear the line
   werase(chatstatusWnd);
+  if (Layout.borders) {
+    wattrset(chatstatusWnd, named_style_attr("border", COLOR_GENERAL));
+    fill_hline(chatstatusWnd, 0, 0, getmaxx(chatstatusWnd));
+    wattrset(chatstatusWnd, A_NORMAL);
+    wmove(chatstatusWnd, 0, 0);
+  }
 
   if (!current_buddy) {
     if (forceupdate) {
       update_panels();
     }
+    return;
+  }
+
+  if (chat_status_format()) {
+    if (forceupdate)
+      update_panels();
     return;
   }
 
@@ -2199,7 +2601,7 @@ void scr_update_chat_status(int forceupdate)
       eventchar = 'G';
 
     if (eventchar)
-      mvwprintw(chatstatusWnd, 0, maxX-3, "[%c]", eventchar);
+      mvwprintw(chatstatusWnd, 0, getmaxx(chatstatusWnd)-3, "[%c]", eventchar);
   }
 
 
@@ -2213,6 +2615,72 @@ void increment_if_buddy_not_filtered(gpointer rosterdata, void *param)
   int *p = param;
   if (buddylist_is_status_filtered(buddy_getstatus(rosterdata, NULL)))
     *p=*p+1;
+}
+
+/* -- Roster format (mc.format.roster) -- */
+
+typedef struct {
+  gpointer bud;
+  guint btype;
+  char status;              // Status character
+  const char *status_name;
+  gunichar pending;
+  guint unread;
+  int count;                // Members of a folded group
+  gboolean selected, folded, msg, composing, paused;
+} roster_item_t;
+
+static const char *const roster_fields[] = {
+  "name", "jid", "status", "status_char", "icon", "pending", "unread",
+  "count", "type", "selected", "folded", "msg", "composing", "paused",
+  "sub_from", "sub_to", NULL
+};
+
+static gchar *roster_field(const char *name, const char *arg, gpointer data)
+{
+  roster_item_t *it = data;
+
+  if (!strcmp(name, "name"))
+    return g_strdup(buddy_getname(it->bud));
+  if (!strcmp(name, "jid"))
+    return g_strdup(buddy_getjid(it->bud));
+  if (!strcmp(name, "status"))
+    return g_strdup(it->status_name);
+  if (!strcmp(name, "status_char"))
+    return g_strdup_printf("%c", it->status);
+  if (!strcmp(name, "icon"))
+    return it->status_name ? status_icon(it->status_name, it->status) : NULL;
+  if (!strcmp(name, "pending")) {
+    gchar buf[8] = { 0 };
+    if (it->pending == ' ')
+      return NULL;
+    g_unichar_to_utf8(it->pending, buf);
+    return g_strdup(buf);
+  }
+  if (!strcmp(name, "unread"))
+    return it->unread ? g_strdup_printf("%u", it->unread) : NULL;
+  if (!strcmp(name, "count"))
+    return it->folded ? g_strdup_printf("%d", it->count) : NULL;
+  if (!strcmp(name, "type")) {
+    if (it->btype & ROSTER_TYPE_GROUP)   return g_strdup("group");
+    if (it->btype & ROSTER_TYPE_ROOM)    return g_strdup("room");
+    if (it->btype & ROSTER_TYPE_AGENT)   return g_strdup("agent");
+    if (it->btype & ROSTER_TYPE_SPECIAL) return g_strdup("special");
+    return g_strdup("user");
+  }
+  if (!strcmp(name, "sub_from") || !strcmp(name, "sub_to")) {
+    guint sub;
+    if (!(it->btype & ROSTER_TYPE_USER))
+      return NULL;
+    sub = buddy_getsubscription(it->bud);
+    return (sub & (name[4] == 'f' ? sub_from : sub_to)) ? g_strdup("1") : NULL;
+  }
+  if (!strcmp(name, "selected"))  return it->selected ? g_strdup("1") : NULL;
+  if (!strcmp(name, "folded"))    return it->folded ? g_strdup("1") : NULL;
+  if (!strcmp(name, "msg"))       return it->msg ? g_strdup("1") : NULL;
+  if (!strcmp(name, "composing")) return it->composing ? g_strdup("1") : NULL;
+  if (!strcmp(name, "paused"))    return it->paused ? g_strdup("1") : NULL;
+  return NULL;
 }
 
 //  scr_draw_roster()
@@ -2231,6 +2699,7 @@ void scr_draw_roster(void)
   int x_pos;
   int prefix_length;
   char space[2] = " ";
+  gboolean roster_format = msgfmt_ui_has("roster");
 
   // We can reset update_roster
   if (_update_roster == FALSE)
@@ -2240,7 +2709,8 @@ void scr_draw_roster(void)
   buddylist_build();
 
   getmaxyx(rosterWnd, maxy, maxx);
-  maxx--;  // Last char is for vertical border
+  if (!Layout.borders)
+    maxx--;  // Last char is for vertical border
 
   cursor_backup = curs_set(0);
 
@@ -2253,7 +2723,7 @@ void scr_draw_roster(void)
   wbkgdset(rosterWnd, get_color(COLOR_GENERAL)); // clear background color
   werase(rosterWnd);
 
-  if (Roster_Width) {
+  if (Roster_Width && !Layout.borders) {
     int line_x_pos = roster_win_on_right ? 0 : Roster_Width-1;
     // Redraw the vertical line (not very good...)
     for (i=0 ; i < CHAT_WIN_HEIGHT ; i++)
@@ -2286,7 +2756,7 @@ void scr_draw_roster(void)
     offset = i + 1 - maxy;
   }
 
-  if (roster_win_on_right)
+  if (roster_win_on_right && !Layout.borders)
     x_pos = 1; // 1 char offset (vertical line)
   else
     x_pos = 0;
@@ -2411,6 +2881,48 @@ void scr_draw_roster(void)
       if ((ismuc && isurg >= ui_attn_sign_prio_level_muc) ||
           (!ismuc && isurg >= ui_attn_sign_prio_level))
         pending = attention_sign();
+    }
+
+    if (roster_format) {
+      roster_item_t it;
+      sstr_t *line = sstr_new();
+      const char *kind = isgrp ? "group" : isspe ? "special" :
+                         ismuc ? "room" : "contact";
+      gboolean done;
+
+      memset(&it, 0, sizeof(it));
+      it.bud = BUDDATA(buddy);
+      it.btype = btype;
+      it.status = status;
+      if (ismuc) {
+        it.status_name = (status == 'C') ? "room" : "room_out";
+      } else if (!isgrp && !isspe) {
+        enum imstatus st = buddy_getstatus(BUDDATA(buddy), NULL);
+        it.status_name = (currentstatus == offline) ? "unknown" :
+                         mlua_status_name(st);
+      }
+      it.pending = pending;
+      it.unread = buddy_getunread(BUDDATA(buddy));
+      it.selected = (buddy == current_buddy);
+      it.folded = isgrp && ishid;
+      it.msg = ismsg;
+      it.composing = (pending == '+');
+      it.paused = (pending == '.');
+      if (it.folded)
+        foreach_group_member(BUDDATA(buddy), increment_if_buddy_not_filtered,
+                             &it.count);
+
+      done = msgfmt_ui("roster", kind, roster_fields, roster_field, &it,
+                       maxx, line);
+      if (done) {
+        int base = getbkgd(rosterWnd) & A_ATTRIBUTES;
+        wmove(rosterWnd, i, x_pos);
+        draw_sstr(rosterWnd, line, base, it.selected, maxx);
+        sstr_free(line);
+        i++;
+        continue;
+      }
+      sstr_free(line);
     }
 
     if (isgrp) {
@@ -4712,9 +5224,19 @@ void scr_do_update(void)
       scr_show_buddy_window();
     else
       update_panels();
+    scr_update_roster();
+    if (current_buddy)
+      scr_update_chat_status(TRUE);
+    else
+      scr_update_main_status(TRUE);
   }
-  if (colors_stalled)
+  if (colors_stalled && Curses) {
     parse_colors();
+    if (Layout.borders)
+      draw_frames();
+    scr_update_roster();
+    scr_update_main_status(TRUE);
+  }
   doupdate();
 }
 

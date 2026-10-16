@@ -671,6 +671,19 @@ mc.bind {
 -- Sample alias to join mcabber channel with "/jmc"
 -- mc.alias("jmc", "room join mcabber@conf.lilotux.net")
 
+-- Look
+-- A theme sets colors, frames and formats.  Two themes are provided:
+-- mc.theme(require "mcabber.themes.modern")
+-- mc.theme(require "mcabber.themes.classic")
+--
+-- Or set some parts yourself:
+-- mc.set { ui_borders = "rounded" }  -- rounded, single, double, heavy, ascii
+-- mc.style("msgout", "fg=#7dcfff")
+-- mc.format.icons = { online = "●", away = "◐", dnd = "⊘", offline = "·" }
+-- mc.format.roster = {
+--   contact = " {#status_$status}{icon}{#} {name:*}{>}{?unread} {unread} {/}",
+-- }
+
 -- Message format
 -- The text displayed before messages can be changed with templates or Lua
 -- functions (see the MESSAGE FORMAT section of the manual page).

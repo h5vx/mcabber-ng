@@ -67,6 +67,50 @@ static void test_small(void)
   g_assert_cmpint(l.input.h, ==, 1);
 }
 
+static void test_borders(void)
+{
+  layout_opts_t o = { 30, 100, 5, 24, FALSE, FALSE, 1, TRUE };
+  ui_layout_t l;
+
+  layout_compute(&o, &l);
+  g_assert_true(l.borders);
+  // 30 lines: input (29), main status (28), frame rows 0-27
+  g_assert_cmpint(l.frame_top, ==, 0);
+  g_assert_cmpint(l.frame_bottom, ==, 27);
+  ASSERT_RECT(l.roster,      1,  1, 20, 24);
+  g_assert_cmpint(l.frame_vsep, ==, 25);
+  ASSERT_RECT(l.chat,        1, 26, 20, 73);
+  ASSERT_RECT(l.chatstatus,  0, 27,  1, 71);
+  g_assert_cmpint(l.frame_mid, ==, 21);
+  ASSERT_RECT(l.log,        22,  1,  5, 98);
+  ASSERT_RECT(l.mainstatus, 28,  0,  1, 100);
+  ASSERT_RECT(l.input,      29,  0,  1, 100);
+
+  // Log on top, roster on the right
+  o.log_on_top = TRUE;
+  o.roster_on_right = TRUE;
+  layout_compute(&o, &l);
+  ASSERT_RECT(l.log,         1,  1,  5, 98);
+  g_assert_cmpint(l.frame_mid, ==, 6);
+  ASSERT_RECT(l.chat,        7,  1, 20, 73);
+  g_assert_cmpint(l.frame_vsep, ==, 74);
+  ASSERT_RECT(l.roster,      7, 75, 20, 24);
+  ASSERT_RECT(l.chatstatus,  6,  2,  1, 71);
+
+  // No log, no roster
+  o.log_height = 0;
+  o.roster_width = 0;
+  layout_compute(&o, &l);
+  g_assert_cmpint(l.frame_mid, ==, -1);
+  g_assert_cmpint(l.frame_vsep, ==, -1);
+  ASSERT_RECT(l.chat,        1,  1, 26, 98);
+
+  // Too small: no frames
+  o.lines = 4;
+  layout_compute(&o, &l);
+  g_assert_false(l.borders);
+}
+
 int main(int argc, char **argv)
 {
   g_test_init(&argc, &argv, NULL);
@@ -74,5 +118,6 @@ int main(int argc, char **argv)
   g_test_add_func("/layout/options", test_options);
   g_test_add_func("/layout/hidden", test_hidden);
   g_test_add_func("/layout/small", test_small);
+  g_test_add_func("/layout/borders", test_borders);
   return g_test_run();
 }
