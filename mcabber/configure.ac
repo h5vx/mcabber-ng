@@ -2,7 +2,7 @@
 # Process this file with autoconf to produce a configure script.
 
 AC_PREREQ([2.71])
-AC_INIT([mcabber],[1.1.3-dev],[mcabber@lilotux.net])
+AC_INIT([mcabber-ng],[0.1.0-dev],[gtutorial3@gmail.com])
 XC_AUTOMAKE
 AC_CONFIG_SRCDIR([mcabber])
 AC_CONFIG_HEADERS([mcabber/config.h])
@@ -128,6 +128,8 @@ else
     AC_MSG_WARN([Your ncurses installation does not support unicode])
 fi
 
+AC_CHECK_FUNCS([alloc_pair init_extended_pair init_extended_color tigetflag use_default_colors])
+
 AC_CACHE_CHECK([for ESCDELAY variable],
                [mc_cv_ncurses_escdelay],
                [AC_LINK_IFELSE([AC_LANG_PROGRAM([[]], [[
@@ -140,7 +142,7 @@ if test "$mc_cv_ncurses_escdelay" = yes; then
               [Define if ncurses has ESCDELAY variable])
 fi
 
-AC_ARG_ENABLE(modules, AC_HELP_STRING([--disable-modules],
+AC_ARG_ENABLE(modules, AS_HELP_STRING([--disable-modules],
                                       [disable dynamic modules loading]),
               enable_modules=$enableval)
 if test "x$enable_modules" != "xno"; then
@@ -167,6 +169,51 @@ PKG_CHECK_MODULES(LOUDMOUTH_SHA256, [loudmouth-1.0 >= 1.5.3],
                   []
                  )
 
+# Check for Lua (LuaJIT or PUC Lua 5.1).  Mandatory: the configuration
+# file is a Lua script.
+AC_ARG_WITH(lua,
+    AS_HELP_STRING([--with-lua=@<:@auto|luajit|lua5.1@:>@],
+                   [Lua implementation to embed (default: auto)]),
+    [with_lua=$withval], [with_lua=auto])
+lua_found=no
+if test "x$with_lua" = "xauto" -o "x$with_lua" = "xluajit"; then
+  PKG_CHECK_MODULES(LUAJIT, [luajit >= 2.0],
+    [LUA_CFLAGS="$LUAJIT_CFLAGS"; LUA_LIBS="$LUAJIT_LIBS"
+     lua_found=yes; lua_impl="LuaJIT"], [true])
+fi
+if test "x$lua_found" = "xno" -a "x$with_lua" != "xluajit"; then
+  PKG_CHECK_MODULES(LUA51A, [lua5.1],
+    [LUA_CFLAGS="$LUA51A_CFLAGS"; LUA_LIBS="$LUA51A_LIBS"
+     lua_found=yes; lua_impl="Lua 5.1"], [true])
+fi
+if test "x$lua_found" = "xno" -a "x$with_lua" != "xluajit"; then
+  PKG_CHECK_MODULES(LUA51B, [lua-5.1],
+    [LUA_CFLAGS="$LUA51B_CFLAGS"; LUA_LIBS="$LUA51B_LIBS"
+     lua_found=yes; lua_impl="Lua 5.1"], [true])
+fi
+if test "x$lua_found" = "xno" -a "x$with_lua" != "xluajit"; then
+  PKG_CHECK_MODULES(LUA51C, [lua51],
+    [LUA_CFLAGS="$LUA51C_CFLAGS"; LUA_LIBS="$LUA51C_LIBS"
+     lua_found=yes; lua_impl="Lua 5.1"], [true])
+fi
+if test "x$lua_found" = "xno"; then
+  AC_MSG_ERROR([LuaJIT or Lua 5.1 development files are required])
+fi
+mc_save_CPPFLAGS="$CPPFLAGS"
+CPPFLAGS="$CPPFLAGS $LUA_CFLAGS"
+AC_MSG_CHECKING([for Lua 5.1 API])
+AC_COMPILE_IFELSE([AC_LANG_PROGRAM([[#include <lua.h>]], [[
+#if LUA_VERSION_NUM != 501
+# error not Lua 5.1
+#endif
+]])], [AC_MSG_RESULT(yes)],
+      [AC_MSG_RESULT(no)
+       AC_MSG_ERROR([Lua headers do not provide the 5.1 API])])
+CPPFLAGS="$mc_save_CPPFLAGS"
+AC_SUBST(LUA_CFLAGS)
+AC_SUBST(LUA_LIBS)
+AC_DEFINE_UNQUOTED([MCABBER_LUA_IMPL], ["$lua_impl"], [Embedded Lua implementation])
+
 # Check for lm_ssl_set_cipher_list in loudmouth
 AC_CHECK_LIB(loudmouth-1, lm_ssl_set_cipher_list,
               AC_DEFINE([HAVE_LM_SSL_CIPHER_LIST], 1,
@@ -182,7 +229,7 @@ AC_CHECK_LIB(loudmouth-1, lm_ssl_set_ca,
 
 
 # Check for libidn
-AC_ARG_WITH(libidn, AC_HELP_STRING([--with-libidn=[DIR]],
+AC_ARG_WITH(libidn, AS_HELP_STRING([--with-libidn=[DIR]],
                                    [Support IDN (needs GNU Libidn)]),
             libidn=$withval, libidn=yes)
 if test "$libidn" != "no" ; then
@@ -198,7 +245,7 @@ fi
 
 # Check for gpgme
 AC_ARG_ENABLE(gpgme,
-    AC_HELP_STRING([--disable-gpgme], [disable GPGME support]),
+    AS_HELP_STRING([--disable-gpgme], [disable GPGME support]),
     [ if test x"$enableval" = x"no"; then
         enable_gpgme=no
       fi
@@ -211,7 +258,7 @@ fi
 
 # Check for otr
 AC_ARG_ENABLE(otr,
-    AC_HELP_STRING([--enable-otr],
+    AS_HELP_STRING([--enable-otr],
                    [enable OTR (Off-the-Record) messaging support]),
     enable_otr=$enableval,
     otr="")
@@ -226,11 +273,11 @@ fi
 
 # Check for Enchant stuff
 AC_ARG_ENABLE(enchant,
-              AC_HELP_STRING([--enable-enchant], [enable enchant support]),
+              AS_HELP_STRING([--enable-enchant], [enable enchant support]),
               enable_enchant=$enableval, enchant="")
 # Check for Aspell stuff
 AC_ARG_ENABLE(aspell,
-              AC_HELP_STRING([--enable-aspell], [enable aspell support]),
+              AS_HELP_STRING([--enable-aspell], [enable aspell support]),
               enable_aspell=$enableval, aspell="")
 
 if test "x$enable_enchant" = "xyes"; then
@@ -264,7 +311,7 @@ pkglibdir=${libdir}/${PACKAGE}
 AC_DEFINE_DIR(PKGLIB_DIR, pkglibdir, [Modules directory])
 
 AC_ARG_ENABLE(debug,
-    AC_HELP_STRING([--enable-debug], [add development compilation options]),
+    AS_HELP_STRING([--enable-debug], [add development compilation options]),
     debug=$enableval, debug="")
 if test x"${debug}" = x"yes"; then
     AC_DEFINE_UNQUOTED([ENABLE_DEBUG],[1],[Devel compilation options])
@@ -282,7 +329,7 @@ else
 fi
 
 AC_ARG_ENABLE(hgcset,
-    AC_HELP_STRING([--disable-hgcset], [do not use Mercurial changeset value]),
+    AS_HELP_STRING([--disable-hgcset], [do not use Mercurial changeset value]),
     hgcset=$enableval, hgcset="yes")
 AM_CONDITIONAL(HGCSET, [test x$hgcset = xyes])
 if test "${hgcset}" = "yes"; then
@@ -308,6 +355,7 @@ AC_CONFIG_FILES([mcabber/Makefile
                  doc/Makefile
                  doc/guide/Makefile
                  doc/help/Makefile
+                 tests/Makefile
                  mcabber.pc
                  Makefile])
 AC_OUTPUT

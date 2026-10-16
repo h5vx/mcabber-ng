@@ -21,10 +21,10 @@ void process_command(const char *line, guint iscmd);
 char *expandalias(const char *line);
 #ifdef MODULES_ENABLE
 gpointer cmd_del(gpointer id);
+#endif
 gpointer cmd_add(const char *name, const char *help, guint flags1, guint flags2,
                  void (*f)(char*), gpointer userdata);
 gboolean cmd_set_safe(const gchar *name, gboolean safe);
-#endif
 gboolean cmd_is_safe(const gchar *name);
 
 void cmd_room_whois(gpointer bud, const char *nick, guint interactive);

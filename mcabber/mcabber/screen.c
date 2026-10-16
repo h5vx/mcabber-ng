@@ -265,6 +265,16 @@ static int find_color(const char *name)
   return -1;
 }
 
+//  user_color_count()
+// Number of colors that can be used as user colors (each needs a pair).
+static int user_color_count(void)
+{
+  int n = MIN(COLORS, 256);
+  if (COLOR_PAIRS > 0)
+    n = MIN(n, COLOR_PAIRS - COLOR_max);
+  return MAX(n, 0);
+}
+
 static ccolor_t *get_user_color(const char *color)
 {
   bool isbright = FALSE;
@@ -277,6 +287,10 @@ static ccolor_t *get_user_color(const char *color)
   cl = find_color(color);
   if (cl < 0)
     return NULL;
+  if (Curses && cl >= user_color_count()) {
+    scr_LogPrint(LPRINT_LOGNORM, "ERROR: Color out of range: %s", color);
+    return NULL;
+  }
   ccol = g_new0(ccolor_t, 1);
   ccol->color_attrib = isbright ? A_BOLD : A_NORMAL;
   ccol->color_pair = cl + COLOR_max; // User colors come after the internal ones
@@ -551,7 +565,9 @@ static void parse_colors(void)
           break;
     }
   }
-  for (i = COLOR_max; i < (COLOR_max + COLORS); i++)
+  // On direct-color terminals COLORS can be 2^24: only the first
+  // 256 colors get a pair.
+  for (i = COLOR_max; i < COLOR_max + user_color_count(); i++)
     init_pair(i, i-COLOR_max, find_color(background));
 
   if (!nickcols) {

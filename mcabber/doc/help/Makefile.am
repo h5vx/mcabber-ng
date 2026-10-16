@@ -1,4 +1,4 @@
-helpdir = $(datadir)/mcabber/help
+helpdir = $(datadir)/mcabber-ng/help
 
 install-data-local:
 	$(INSTALL) -d $(DESTDIR)$(datadir)/mcabber/help

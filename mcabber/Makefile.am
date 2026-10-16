@@ -1,4 +1,4 @@
-SUBDIRS = mcabber doc modules
+SUBDIRS = mcabber doc modules tests
 ACLOCAL_AMFLAGS = -I macros
 if INSTALL_HEADERS
 pkgconfigdir = $(libdir)/pkgconfig

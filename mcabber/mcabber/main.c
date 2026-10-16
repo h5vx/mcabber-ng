@@ -44,6 +44,7 @@
 #include "help.h"
 #include "events.h"
 #include "compl.h"
+#include "mlua.h"
 
 #ifndef MODULES_ENABLE
 # include "fifo.h"
@@ -217,7 +218,7 @@ static char *password_eval(const char *command, int *status)
 
 static void credits(void)
 {
-  const char *v_fmt = "MCabber %s -- Email: mcabber [at] lilotux [dot] net\n";
+  const char *v_fmt = "mcabber-ng %s (based on MCabber by Mikael Berthe)\n";
   char *v = mcabber_version();
   printf(v_fmt, v);
   scr_LogPrint(LPRINT_NORMAL|LPRINT_NOTUTF8, v_fmt, v);
@@ -227,6 +228,7 @@ static void credits(void)
 static void compile_options(void)
 {
   puts("Installation data directory: " DATA_DIR "\n");
+  puts("Embedded Lua: " MCABBER_LUA_IMPL);
 #ifdef HAVE_UNICODE
   puts("Compiled with unicode support.");
 #endif
@@ -444,6 +446,7 @@ int main(int argc, char **argv)
   scr_init_locale_charset();
   ut_init_debug();
   help_init();
+  mlua_init();
 
   /* Parsing config file... */
   ret = cfg_read_file(configFile, TRUE);
@@ -575,6 +578,7 @@ int main(int argc, char **argv)
 #ifdef MODULES_ENABLE
   modules_deinit();
 #endif
+  mlua_deinit();
 #ifndef MODULES_ENABLE
   fifo_deinit();
 #endif

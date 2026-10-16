@@ -41,6 +41,7 @@
 #include "utf8.h"
 #include "xmpp.h"
 #include "main.h"
+#include "mlua.h"
 
 #define IMSTATUS_AWAY           "away"
 #define IMSTATUS_ONLINE         "online"
@@ -204,6 +205,7 @@ void cmd_init(void)
   cmd_add("help", "Display some help", COMPL_CMD, 0, &do_help, NULL);
   cmd_add("iline", "Manipulate input buffer", 0, 0, &do_iline, NULL);
   cmd_add("info", "Show basic info on current buddy", 0, 0, &do_info, NULL);
+  cmd_add("lua", "Run Lua code", 0, 0, &mlua_cmd_lua, NULL);
   cmd_add("module", "Manipulations with modules", COMPL_MODULE, 0, &do_module,
           NULL);
   cmd_add("move", "Move the current buddy to another group", COMPL_GROUPNAME,
