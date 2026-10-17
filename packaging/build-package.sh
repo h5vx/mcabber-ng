@@ -5,6 +5,9 @@
 #   packaging/build-package.sh deb|rpm|arch VERSION [DISTRIBUTION]
 #
 # DISTRIBUTION is added to the version of Debian packages (e.g. debian12).
+# Releases provide a universal Debian package made from the static build
+# instead (static/make-deb.sh); "deb" builds a full-featured package for one
+# distribution release.
 # Packages are written to dist/ (or $OUT).
 
 set -eu

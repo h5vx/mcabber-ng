@@ -182,10 +182,9 @@ static void set_package_path(void)
   if (cfgdir)
     g_string_append_printf(path, "%s/lua/?.lua;%s/lua/?/init.lua;",
                            cfgdir, cfgdir);
-#ifdef DATA_DIR
-  g_string_append(path, DATA_DIR "/mcabber-ng/lua/?.lua;"
-                        DATA_DIR "/mcabber-ng/lua/?/init.lua;");
-#endif
+  g_string_append_printf(path, "%s/mcabber-ng/lua/?.lua;"
+                         "%s/mcabber-ng/lua/?/init.lua;",
+                         settings_get_data_dir(), settings_get_data_dir());
 
   lua_getfield(L, LUA_GLOBALSINDEX, "package");
   lua_getfield(L, -1, "path");

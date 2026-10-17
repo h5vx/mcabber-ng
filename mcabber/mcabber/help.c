@@ -102,12 +102,13 @@ void init_help_dirs(void)
 
   // initialize variables
   paths = settings_opt_get("help_dirs");
-  if (!paths || !*paths)
-#ifdef DATA_DIR
-    paths = DATA_DIR "/mcabber-ng/help";
-#else
-    paths = "/usr/local/share/mcabber/help;/usr/share/mcabber/help";
-#endif
+  if (!paths || !*paths) {
+    static gchar *default_paths;
+    if (!default_paths)
+      default_paths = g_build_filename(settings_get_data_dir(), "mcabber-ng",
+                                       "help", NULL);
+    paths = default_paths;
+  }
 
   langs = settings_opt_get("lang");
 

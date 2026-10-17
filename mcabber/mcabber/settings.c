@@ -114,6 +114,41 @@ void settings_set_mcabber_config_dir(const gchar *dir)
   config_dir = g_strdup(dir);
 }
 
+//  settings_get_data_dir()
+// Returns the directory of the installed data (help files, Lua themes):
+// <bindir>/../share when it contains mcabber-ng/, so that the program can be
+// installed anywhere (the static build), or DATA_DIR.
+const gchar *settings_get_data_dir(void)
+{
+  static gchar *data_dir;
+
+  if (!data_dir) {
+    gchar *exe = g_file_read_link("/proc/self/exe", NULL);
+    if (exe) {
+      gchar *bindir = g_path_get_dirname(exe);
+      gchar *share = g_build_filename(bindir, "..", "share", NULL);
+      gchar *dir = g_canonicalize_filename(share, NULL);
+      gchar *check = g_build_filename(dir, "mcabber-ng", NULL);
+      if (g_file_test(check, G_FILE_TEST_IS_DIR))
+        data_dir = dir;
+      else
+        g_free(dir);
+      g_free(check);
+      g_free(share);
+      g_free(bindir);
+      g_free(exe);
+    }
+  }
+  if (!data_dir) {
+#ifdef DATA_DIR
+    data_dir = g_strdup(DATA_DIR);
+#else
+    data_dir = g_strdup("/usr/share");
+#endif
+  }
+  return data_dir;
+}
+
 //  settings_get_mcabber_config_dir()
 // Returns the mcabber-ng configuration directory:
 // $XDG_CONFIG_HOME/mcabber-ng (~/.config/mcabber-ng by default).

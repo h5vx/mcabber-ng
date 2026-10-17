@@ -59,15 +59,19 @@ Each [release](https://github.com/h5vx/mcabber-ng/releases) provides:
 
 | | Files |
 |---|---|
-| Debian 12, 13 / Ubuntu 22.04, 24.04 (amd64, arm64) | `mcabber-ng_*.deb` |
+| Debian, Ubuntu and derivatives, any release (amd64, i386, arm64, armhf, riscv64) | `mcabber-ng_*.deb` |
 | Fedora 42 (x86_64, aarch64) | `mcabber-ng-*.rpm` |
 | Arch Linux (x86_64) | `mcabber-ng-*.pkg.tar.zst` |
 | Any Linux: x86_64, x86, aarch64, armv7, riscv64 | `mcabber-ng-*-linux-ARCH-static.tar.gz` |
 
-The static binaries have no dependencies (they are built with musl);
-extract them in `/usr/local`. They are built without modules, PGP and IDN.
+The `.deb` packages and the static binaries have no dependencies (they are
+built with musl), and the static archives can be extracted anywhere
+(usually in `/usr/local`). They are built without modules, PGP, OTR, IDN
+and spell checking; build from source to get them.
 
 ```sh
+sudo apt install ./mcabber-ng_*_amd64.deb
+# or
 sudo tar -C /usr/local -xzf mcabber-ng-*-linux-x86_64-static.tar.gz
 ```
 
