@@ -96,6 +96,7 @@ static void do_otrpolicy(char *arg);
 static void do_echo(char *arg);
 static void do_members(char *arg);
 static void do_console(char *arg);
+static void do_url(char *arg);
 static void do_module(char *arg);
 static void do_carbons(char *arg);
 #ifdef HAVE_OMEMO
@@ -217,6 +218,7 @@ void cmd_init(void)
   cmd_add("members", "Show or hide the members of the current room", 0, 0,
           &do_members, NULL);
   cmd_add("console", "XMPP console (raw XML stream)", 0, 0, &do_console, NULL);
+  cmd_add("url", "Open a link of the chat window", 0, 0, &do_url, NULL);
   cmd_add("module", "Manipulations with modules", COMPL_MODULE, 0, &do_module,
           NULL);
   cmd_add("move", "Move the current buddy to another group", COMPL_GROUPNAME,
@@ -2652,6 +2654,11 @@ static void do_members(char *arg)
 static void do_console(char *arg)
 {
   scr_console(arg);
+}
+
+static void do_url(char *arg)
+{
+  scr_url(arg);
 }
 
 #ifdef HAVE_OMEMO

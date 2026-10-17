@@ -1,0 +1,9 @@
+
+ /URL [command]
+
+Label the links displayed in the chat window (even when they are wrapped on several lines); type the label of a link to open it, Escape cancels.  A single link is opened directly.
+The link is opened with the given command, or with the "url_open_command" option (default "xdg-open").  "%s" in the command is replaced by the URL, which is added as the last argument otherwise.  The labels are made of the characters of the "url_hint_chars" option.
+The default key binding is Alt+o.
+
+/url wl-copy
+ Copy a link to the clipboard (Wayland)

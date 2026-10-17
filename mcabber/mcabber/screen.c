@@ -24,6 +24,7 @@
 #include <time.h>
 #include <ctype.h>
 #include <unistd.h>
+#include <fcntl.h>
 
 #include <config.h>
 #include <locale.h>
@@ -66,6 +67,7 @@
 #include "msgformat.h"
 #include "style.h"
 #include "xmlsplit.h"
+#include "links.h"
 #include "utils.h"
 #include "xmpp.h"
 #include "main.h"
@@ -532,6 +534,7 @@ static const struct {
   { "accent",           "blue" },
   { "input",            "" },
   { "input_prompt",     "bold" },
+  { "link_hint",        "fg=black bg=yellow bold" },
   { NULL, NULL }
 };
 
@@ -987,6 +990,7 @@ void scr_init_bindings(void)
     { "Alt+u",      "iline word_upcase" },
     { "Alt+l",      "iline word_downcase" },
     { "Alt+c",      "iline word_capit" },
+    { "Alt+o",      "url" },
     { "F1",         "help" },
     { NULL, NULL }
   };
@@ -1563,11 +1567,259 @@ static gchar *status_icon(const char *status, char def)
   return icon ? icon : g_strdup_printf("%c", def);
 }
 
+/* -- Link hints (/url) -------------------------------------------------- */
+
+static void keycode_to_spec(const keycode_t *kcode, keyspec_t *spec);
+static void scr_update_window(winbuf_t *win_entry);
+static int named_style_attr(const char *name, int fallback);
+
+static struct {
+  gboolean active;
+  winbuf_t *win;
+  GString *typed;       // Keys typed so far
+  gchar *command;       // Command given to /url, or NULL
+  GArray *links;        // Displayed links (hbuf_link_t)
+  gchar **labels;
+} hints;
+
+static const char *hint_chars(void)
+{
+  const char *chars = settings_opt_get("url_hint_chars");
+  return (chars && *chars) ? chars : "asdfghjklqwertyuiopzxcvbnm";
+}
+
+//  draw_link_hints(win_entry, hbuf_head, rows, nrows)
+// Draw the labels of the links displayed in the window.  rows[i] is the
+// window line of the hbuf line i, or -1 if it is not displayed.
+static void draw_link_hints(winbuf_t *win_entry, GList *hbuf_head,
+                            const int *rows, int nrows)
+{
+  GArray *found = hbuf_find_links(hbuf_head, nrows);
+  GArray *shown = g_array_new(FALSE, TRUE, sizeof(hbuf_link_t));
+  int maxx = getmaxx(win_entry->win);
+  guint i;
+
+  // The most recent links (at the bottom) get the shortest labels
+  for (i = found->len; i-- > 0; ) {
+    hbuf_link_t *lk = &g_array_index(found, hbuf_link_t, i);
+    if (rows[lk->line] >= 0 && (int)lk->col < maxx) {
+      g_array_append_val(shown, *lk);
+    } else {
+      g_free(lk->url);
+    }
+  }
+  g_array_free(found, TRUE);
+  hbuf_links_free(hints.links);
+  g_strfreev(hints.labels);
+  hints.links = shown;
+  hints.labels = links_labels(hint_chars(), shown->len);
+
+  wattrset(win_entry->win, named_style_attr("link_hint", COLOR_GENERAL));
+  for (i = 0; i < shown->len && hints.labels[i]; i++) {
+    hbuf_link_t *lk = &g_array_index(shown, hbuf_link_t, i);
+    const char *label = hints.labels[i];
+    if (!g_str_has_prefix(label, hints.typed->str))
+      continue;
+    // Only the keys that remain to be typed are displayed
+    mvwaddnstr(win_entry->win, rows[lk->line], lk->col,
+               label + hints.typed->len, -1);
+  }
+  wattrset(win_entry->win, get_color(COLOR_GENERAL));
+}
+
+
+static void hints_stop(void)
+{
+  winbuf_t *win = hints.win;
+
+  hints.active = FALSE;
+  hints.win = NULL;
+  hbuf_links_free(hints.links);
+  hints.links = NULL;
+  g_strfreev(hints.labels);
+  hints.labels = NULL;
+  g_free(hints.command);
+  hints.command = NULL;
+  if (win && win == currentWindow) {
+    scr_update_window(win);
+    update_panels();
+  }
+}
+
+static void open_link_child_setup(gpointer data)
+{
+  // The program must not read the terminal, nor get its signals
+  int fd = open("/dev/null", O_RDWR);
+  if (fd >= 0) {
+    dup2(fd, STDIN_FILENO);
+    if (fd > STDERR_FILENO)
+      close(fd);
+  }
+  setsid();
+}
+
+//  open_link(url, command)
+// Open url with command (the url_open_command option if NULL).  "%s" in
+// the command is replaced by the URL, which is added at the end otherwise.
+static void open_link(const char *url, const char *command)
+{
+  mlua_event_t *ev = mlua_event_new("url_open");
+  gchar **argv = NULL, *lua_url = NULL;
+  GPtrArray *args;
+  GError *err = NULL;
+  gboolean subst = FALSE;
+  int argc, i;
+
+  if (ev) {
+    mlua_event_set_str(ev, "url", url);
+    mlua_event_set_str(ev, "command", command);
+    if (mlua_event_emit(ev) == MLUA_DROP) {   // Handled by Lua
+      mlua_event_free(ev);
+      return;
+    }
+    lua_url = mlua_event_get_str(ev, "url");
+    mlua_event_free(ev);
+    if (lua_url)
+      url = lua_url;
+  }
+
+  if (!command)
+    command = settings_opt_get("url_open_command");
+  if (!command || !*command)
+    command = "xdg-open";
+  if (!g_shell_parse_argv(command, &argc, &argv, &err)) {
+    scr_LogPrint(LPRINT_NORMAL, "Invalid command \"%s\": %s", command,
+                 err->message);
+    g_error_free(err);
+    g_free(lua_url);
+    return;
+  }
+  args = g_ptr_array_new_with_free_func(g_free);
+  for (i = 0; i < argc; i++) {
+    if (strstr(argv[i], "%s")) {
+      gchar **parts = g_strsplit(argv[i], "%s", -1);
+      g_ptr_array_add(args, g_strjoinv(url, parts));
+      g_strfreev(parts);
+      subst = TRUE;
+    } else {
+      g_ptr_array_add(args, g_strdup(argv[i]));
+    }
+  }
+  if (!subst)
+    g_ptr_array_add(args, g_strdup(url));
+  g_ptr_array_add(args, NULL);
+
+  if (g_spawn_async(NULL, (gchar **)args->pdata, NULL,
+                    G_SPAWN_SEARCH_PATH | G_SPAWN_STDOUT_TO_DEV_NULL |
+                    G_SPAWN_STDERR_TO_DEV_NULL,
+                    open_link_child_setup, NULL, NULL, &err)) {
+    scr_LogPrint(LPRINT_LOGNORM, "Opening %s", url);
+  } else {
+    scr_LogPrint(LPRINT_NORMAL, "Cannot run %s: %s", argv[0], err->message);
+    g_error_free(err);
+  }
+  g_ptr_array_free(args, TRUE);
+  g_strfreev(argv);
+  g_free(lua_url);
+}
+
+//  hints_key(kcode)
+// A key typed while the link labels are displayed.  Returns TRUE if the
+// key has been consumed.
+static gboolean hints_key(const keycode_t *kcode)
+{
+  keyspec_t spec;
+  guint i, matches = 0;
+  int found = -1;
+
+  if (!hints.active)
+    return FALSE;
+  if (hints.win != currentWindow) {   // The window has changed
+    hints_stop();
+    return FALSE;
+  }
+
+  keycode_to_spec(kcode, &spec);
+  if (spec.key == KN_BACKSPACE && !spec.mods) {
+    if (hints.typed->len) {
+      const char *last = g_utf8_find_prev_char(hints.typed->str,
+                                               hints.typed->str +
+                                               hints.typed->len);
+      g_string_truncate(hints.typed, last - hints.typed->str);
+    }
+  } else if (spec.key > 0 && !(spec.mods & (KMOD_CTRL | KMOD_ALT))) {
+    char buf[8];
+    buf[g_unichar_to_utf8(spec.key, buf)] = '\0';
+    g_string_append(hints.typed, buf);
+  } else {
+    hints_stop();     // Esc, Ctrl-c or any other key: cancel
+    return TRUE;
+  }
+
+  for (i = 0; hints.labels && hints.labels[i]; i++) {
+    if (g_str_has_prefix(hints.labels[i], hints.typed->str))
+      matches++;
+    if (!strcmp(hints.labels[i], hints.typed->str))
+      found = i;
+  }
+  if (found >= 0) {
+    gchar *url = g_strdup(g_array_index(hints.links, hbuf_link_t,
+                                        found).url);
+    gchar *cmd = g_strdup(hints.command);
+    hints_stop();
+    open_link(url, cmd);
+    g_free(url);
+    g_free(cmd);
+  } else if (!matches) {
+    scr_LogPrint(LPRINT_NORMAL, "No such link.");
+    hints_stop();
+  } else {
+    scr_update_window(hints.win);
+    update_panels();
+  }
+  return TRUE;
+}
+
+//  scr_url(command)
+// /url: label the links displayed in the chat window; the one whose label
+// is typed is opened with command (url_open_command if NULL).
+void scr_url(const char *command)
+{
+  if (hints.active)
+    hints_stop();
+  if (!currentWindow || !chatmode) {
+    scr_LogPrint(LPRINT_NORMAL, "No chat window.");
+    return;
+  }
+  if (!hints.typed)
+    hints.typed = g_string_new(NULL);
+  g_string_truncate(hints.typed, 0);
+  hints.active = TRUE;
+  hints.win = currentWindow;
+  hints.command = (command && *command) ? g_strdup(command) : NULL;
+  scr_update_window(currentWindow);
+
+  if (!hints.links || !hints.links->len) {
+    scr_LogPrint(LPRINT_NORMAL, "No link in the chat window.");
+    hints_stop();
+  } else if (hints.links->len == 1) {
+    gchar *url = g_strdup(g_array_index(hints.links, hbuf_link_t, 0).url);
+    gchar *cmd = g_strdup(hints.command);
+    hints_stop();
+    open_link(url, cmd);
+    g_free(url);
+    g_free(cmd);
+  } else {
+    update_panels();
+  }
+}
+
 //  scr_update_window()
 // (Re-)Display the given chat window.
 static void scr_update_window(winbuf_t *win_entry)
 {
   int n, mark_offset = 0;
+  int *rows;
   hbb_line **lines, *line;
   GList *hbuf_head;
   int color = COLOR_GENERAL;
@@ -1611,6 +1863,10 @@ static void scr_update_window(winbuf_t *win_entry)
 
   // Get the last CHAT_WIN_HEIGHT lines, and one more to detect scroll.
   lines = hbuf_get_lines(hbuf_head, CHAT_WIN_HEIGHT+1);
+  // Window line of each hbuf line (for the link hints)
+  rows = g_new(int, CHAT_WIN_HEIGHT);
+  for (n = 0; n < CHAT_WIN_HEIGHT; n++)
+    rows[n] = -1;
 
   if (CHAT_WIN_HEIGHT > 1) {
     // Do we have a read mark?
@@ -1641,6 +1897,7 @@ static void scr_update_window(winbuf_t *win_entry)
     if (line) {
       if (skipline)
         goto scr_update_window_skipline;
+      rows[n] = winy;
 
       if (line->flags & HBB_PREFIX_HLIGHT_OUT)
         color = COLOR_MSGOUT;
@@ -1711,6 +1968,10 @@ scr_update_window_skipline:
       break;
     }
   }
+  if (hints.active && hints.win == win_entry)
+    draw_link_hints(win_entry, hbuf_head, rows, CHAT_WIN_HEIGHT);
+  g_free(rows);
+
   line = *(lines+CHAT_WIN_HEIGHT); //line is scrolled out and never written
   if (line) {
     if (autolock && !win_entry->bd->lock) {
@@ -6238,6 +6499,8 @@ void scr_process_key(keycode_t kcode)
   static int ex_or_search_mode = FALSE;
 
   if (paste_key(&kcode))
+    return;
+  if (hints_key(&kcode))
     return;
 
   lock_chatstate = FALSE;

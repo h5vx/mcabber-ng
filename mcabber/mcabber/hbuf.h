@@ -62,6 +62,15 @@ GList *hbuf_previous_persistent(GList *l_line);
 
 hbb_line **hbuf_get_lines(GList *hbuf, unsigned int n);
 GList *hbuf_search(GList *hbuf, int direction, const char *string);
+
+// A link displayed in the lines returned by hbuf_get_lines()
+typedef struct {
+  guint line;           // Line where the link begins (or its first visible
+  guint col;            // line), and column
+  gchar *url;
+} hbuf_link_t;
+GArray *hbuf_find_links(GList *hbuf, unsigned int n);
+void hbuf_links_free(GArray *links);
 GList *hbuf_jump_date(GList *hbuf, time_t t);
 GList *hbuf_jump_percent(GList *hbuf, int pc);
 GList *hbuf_jump_readmark(GList *hbuf);

@@ -133,6 +133,7 @@ Ctrl-k::        Delete from the cursor to the end of line (or join the line with
 Ctrl-w::        Backward kill word
 Ctrl-t::        Transpose chars
 Ctrl-o::        Accept line and put the next history line in the input line (accept-line-and-down-history)
+Alt-o::         Label the links of the chat window, to open one ("/url")
 
 Additional key bindings may be specified using the '/bind' command described
 in the COMMANDS section.
@@ -596,6 +597,11 @@ COMMANDS RELATED TO MCABBER
 /console [show|hide|toggle|clear]::
         Display the XMPP console (see USER INTERFACE).  'clear' empties it.
 
+/url [command]::
+        Label the links displayed in the chat window (like the EasyMotion plugin of Vim), even when they are wrapped on several lines: type the label of a link to open it; Escape cancels.  When there is only one link, it is opened directly. +
+        The link is opened with the 'url_open_command' option (default "xdg-open"), or with the given command.  "%s" in the command is replaced by the URL, which is added as the last argument otherwise.  The command is not run by a shell: to use one, pass the URL as a parameter (`sh -c 'firefox "$1"' sh`), never put "%s" in the shell code.  The labels are made of the characters of the 'url_hint_chars' option (default "asdfghjklqwertyuiopzxcvbnm"); they use the "link_hint" style. +
+        Example: "/url wl-copy" copies a link to the clipboard.
+
 /version::
         Display current version of mcabber.
 
@@ -721,6 +727,11 @@ subscription::
 
 receipt::
         A message delivery receipt has been received.  Fields: jid, id.
+
+url_open::
+        A link is about to be opened (/url).  Fields: url, command (the
+        command given to /url, or nil).  The handlers can change 'url';
+        mc.DROP means that the handler has opened it.
 
 ready, quit::
         The user interface is ready (before connecting), mcabber-ng is
@@ -884,7 +895,7 @@ timestamp, readmark, status (status lines), log, roster, rostersel
 (selected item), rosterselmsg, rosternewmsg, border, title, title_active,
 roster_group, roster_unread, status_online, status_free, status_away,
 status_notavail, status_dnd, status_invisible, status_offline, badge,
-nick_self, input, input_prompt.  The "background", "bgstatus" and
+nick_self, input, input_prompt, link_hint.  The "background", "bgstatus" and
 "bgrostersel" entries are background colors.  Any other name can be
 defined and used in formats ({#name}).  The old color_* options still
 work for the first ones.

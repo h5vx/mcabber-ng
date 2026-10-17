@@ -1076,6 +1076,14 @@ Ctrl-o
 Accept line and put the next history line in the input line (accept-line-and-down-history)
 </p>
 </dd>
+<dt class="hdlist1">
+Alt-o
+</dt>
+<dd>
+<p>
+Label the links of the chat window, to open one ("/url")
+</p>
+</dd>
 </dl></div>
 <div class="paragraph"><p>Additional key bindings may be specified using the <em>/bind</em> command described
 in the COMMANDS section.</p></div>
@@ -3083,6 +3091,16 @@ Set/update/delete an annotation. If there is no text, the current item&#8217;s a
 </p>
 </dd>
 <dt class="hdlist1">
+/url [command]
+</dt>
+<dd>
+<p>
+        Label the links displayed in the chat window (like the EasyMotion plugin of Vim), even when they are wrapped on several lines: type the label of a link to open it; Escape cancels.  When there is only one link, it is opened directly.<br>
+        The link is opened with the <em>url_open_command</em> option (default "xdg-open"), or with the given command.  "%s" in the command is replaced by the URL, which is added as the last argument otherwise.  The command is not run by a shell: to use one, pass the URL as a parameter (<span class="monospaced">sh -c 'firefox "$1"' sh</span>), never put "%s" in the shell code.  The labels are made of the characters of the <em>url_hint_chars</em> option (default "asdfghjklqwertyuiopzxcvbnm"); they use the "link_hint" style.<br>
+        Example: "/url wl-copy" copies a link to the clipboard.
+</p>
+</dd>
+<dt class="hdlist1">
 /version
 </dt>
 <dd>
@@ -3346,6 +3364,16 @@ receipt
 </p>
 </dd>
 <dt class="hdlist1">
+url_open
+</dt>
+<dd>
+<p>
+        A link is about to be opened (/url).  Fields: url, command (the
+        command given to /url, or nil).  The handlers can change <em>url</em>;
+        mc.DROP means that the handler has opened it.
+</p>
+</dd>
+<dt class="hdlist1">
 ready, quit
 </dt>
 <dd>
@@ -3589,7 +3617,7 @@ timestamp, readmark, status (status lines), log, roster, rostersel
 (selected item), rosterselmsg, rosternewmsg, border, title, title_active,
 roster_group, roster_unread, status_online, status_free, status_away,
 status_notavail, status_dnd, status_invisible, status_offline, badge,
-nick_self, input, input_prompt.  The "background", "bgstatus" and
+nick_self, input, input_prompt, link_hint.  The "background", "bgstatus" and
 "bgrostersel" entries are background colors.  Any other name can be
 defined and used in formats ({#name}).  The old color_* options still
 work for the first ones.</p></div>
@@ -3666,7 +3694,7 @@ License (GPL).</p></div>
 <div id="footer-text">
 Version 1.0.0<br>
 Last updated
- 2026-10-17 20:35:07 WITA
+ 2026-10-17 20:43:46 WITA
 </div>
 </div>
 </body>

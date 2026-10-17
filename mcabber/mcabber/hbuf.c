@@ -27,6 +27,7 @@
 #include "utf8.h"
 #include "screen.h"
 #include "msgformat.h"
+#include "links.h"
 
 
 /* This is a private structure type */
@@ -341,6 +342,107 @@ void hbuf_rebuild(GList **p_hbuf, unsigned int width)
   // #2 Go back to head and create non-persistent blocks when needed
   if (width)
     do_wrap(p_hbuf, first_elt, width);
+}
+
+typedef struct {
+  GList *elt;
+  gsize off;            // Offset of the block in the message text
+  gsize len;
+} msg_seg_t;
+
+//  hbuf_find_links(hbuf, n)
+// Find the links in the n lines from hbuf (the lines that are displayed).
+// Links are searched in whole messages, so that wrapped links are found;
+// a link is reported on the first displayed line where it appears.
+// Returns an array of hbuf_link_t, to free with hbuf_links_free().
+GArray *hbuf_find_links(GList *hbuf, unsigned int n)
+{
+  GArray *res = g_array_new(FALSE, TRUE, sizeof(hbuf_link_t));
+  GHashTable *visible = g_hash_table_new(NULL, NULL);   // elt -> line+1
+  GHashTable *done = g_hash_table_new(NULL, NULL);
+  GList *l;
+  unsigned int i;
+
+  for (l = hbuf, i = 0; l && i < n; l = g_list_next(l), i++)
+    g_hash_table_insert(visible, l, GUINT_TO_POINTER(i + 1));
+
+  for (l = hbuf, i = 0; l && i < n; l = g_list_next(l), i++) {
+    GList *start = l, *m;
+    hbuf_block_t *first;
+    GString *text;
+    GArray *segs, *links;
+    guint k, j;
+
+    // The beginning of the message
+    while (g_list_previous(start) && !is_message_start(start->data))
+      start = g_list_previous(start);
+    if (g_hash_table_contains(done, start))
+      continue;
+    g_hash_table_add(done, start);
+    first = start->data;
+
+    // The whole text: blocks are contiguous, except after a line break
+    text = g_string_new(NULL);
+    segs = g_array_new(FALSE, FALSE, sizeof(msg_seg_t));
+    for (m = start; m; m = g_list_next(m)) {
+      hbuf_block_t *b = m->data;
+      msg_seg_t seg;
+      if (m != start && is_message_start(b))
+        break;
+      if (m != start && (b->flags & HBB_FLAG_PERSISTENT))
+        g_string_append_c(text, '\n');
+      seg.elt = m;
+      seg.off = text->len;
+      seg.len = b->ptr_end - b->ptr;
+      g_string_append_len(text, b->ptr, seg.len);
+      g_array_append_val(segs, seg);
+    }
+
+    links = links_find(text->str);
+    for (k = 0; k < links->len; k++) {
+      link_span_t *span = &g_array_index(links, link_span_t, k);
+      for (j = 0; j < segs->len; j++) {
+        msg_seg_t *seg = &g_array_index(segs, msg_seg_t, j);
+        guint line = GPOINTER_TO_UINT(g_hash_table_lookup(visible, seg->elt));
+        gsize from;
+        char *c;
+        hbuf_link_t link;
+
+        if (!line || seg->off + seg->len <= span->start ||
+            seg->off >= span->end)
+          continue;
+        from = MAX(span->start, seg->off);
+        link.line = line - 1;
+        link.col = (seg->elt == start) ? first->prefix.headw
+                                       : first->prefix.contw;
+        for (c = text->str + seg->off; c < text->str + from;
+             c = next_char(c)) {
+          int w = get_char_width(c);
+          if (w > 0)
+            link.col += w;
+        }
+        link.url = links_url(text->str, span);
+        g_array_append_val(res, link);
+        break;
+      }
+    }
+    g_array_free(links, TRUE);
+    g_array_free(segs, TRUE);
+    g_string_free(text, TRUE);
+  }
+  g_hash_table_destroy(done);
+  g_hash_table_destroy(visible);
+  return res;
+}
+
+void hbuf_links_free(GArray *links)
+{
+  guint i;
+  if (!links)
+    return;
+  for (i = 0; i < links->len; i++)
+    g_free(g_array_index(links, hbuf_link_t, i).url);
+  g_array_free(links, TRUE);
 }
 
 //  hbuf_previous_persistent()

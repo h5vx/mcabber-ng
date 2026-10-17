@@ -5,7 +5,7 @@ bin_PROGRAMS = mcabber-ng
 noinst_LIBRARIES = libmcpure.a
 libmcpure_a_SOURCES = utf8.c utf8.h keys.c keys.h layout.c layout.h \
 		      inputlayout.c inputlayout.h paste.c paste.h fmt.c fmt.h \
-		      style.c style.h xmlsplit.c xmlsplit.h
+		      style.c style.h xmlsplit.c xmlsplit.h links.c links.h
 
 mcabber_ng_SOURCES = main.c main.h roster.c roster.h events.c events.h \
 		  commands.c commands.h compl.c compl.h \

@@ -26,6 +26,8 @@ safe pasting and a modern, themable interface.
   of mcabber.
 - **Room members panel** — next to the chat window, or over it.
 - **XMPP console** — watch the XML stream and send raw stanzas.
+- **Link hints** — <kbd>Alt</kbd>+<kbd>o</kbd> labels the links of the chat
+  window, wrapped ones included; type a label to open the link.
 - **OMEMO** — end-to-end encryption of one-to-one chats, compatible with
   Conversations, Dino, Gajim and Profanity; messages are encrypted
   automatically for contacts who use it.
@@ -221,6 +223,7 @@ All the mcabber commands are available (`/help` lists them). New ones:
 | `/console [show\|hide\|toggle\|clear]` | XMPP console; text typed while it is displayed is sent as raw XML |
 | `/bind KEY = COMMAND` | Bind a key, by name |
 | `/omemo [info\|on\|off\|trust…]` | OMEMO encryption: devices, fingerprints, trust |
+| `/url [command]` | Label the links of the chat window (<kbd>Alt</kbd>+<kbd>o</kbd>) and open the chosen one |
 
 ## Documentation
 

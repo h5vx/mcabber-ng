@@ -124,6 +124,7 @@ void scr_draw_roster(void);
 void scr_update_roster(void);
 void scr_update_main_status(int forceupdate);
 void scr_update_chat_status(int forceupdate);
+void scr_url(const char *command);
 void scr_roster_visibility(int status);
 void scr_remove_receipt_flag(const char *jidto, gconstpointer xep184);
 void scr_show_buddy_window(void);

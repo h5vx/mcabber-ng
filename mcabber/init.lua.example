@@ -607,6 +607,14 @@ mc.set {
 -- mc.command("otrpolicy default manual")
 
 mc.set {
+  -- Links: "/url" (Alt+o) labels the links of the chat window; type a label
+  -- to open the link with url_open_command ("%s" is replaced by the URL,
+  -- which is added at the end otherwise; the command is not run by a shell).
+  -- url_open_command = "xdg-open",
+  -- url_hint_chars = "asdfghjklqwertyuiopzxcvbnm",
+}
+
+mc.set {
   -- OMEMO end-to-end encryption (one-to-one chats only)
   -- (Only available if mcabber-ng is built with OMEMO support)
   -- Set omemo to 0 to disable it.  The keys are kept in
