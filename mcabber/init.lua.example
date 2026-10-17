@@ -612,6 +612,14 @@ mc.set {
   -- which is added at the end otherwise; the command is not run by a shell).
   -- url_open_command = "xdg-open",
   -- url_hint_chars = "asdfghjklqwertyuiopzxcvbnm",
+  --
+  -- External editor for the input line ("/editor", Alt+e); the default is
+  -- $VISUAL, then $EDITOR, then vi.  In tmux, it opens in a pane next to
+  -- mcabber-ng ("split"), a new "window", a "popup", or "off" (in the same
+  -- terminal).  editor_tmux_args are extra arguments for the tmux command.
+  -- editor = "nvim",
+  -- editor_tmux = "split",
+  -- editor_tmux_args = "-h -l 40%",
 }
 
 mc.set {

@@ -991,6 +991,7 @@ void scr_init_bindings(void)
     { "Alt+l",      "iline word_downcase" },
     { "Alt+c",      "iline word_capit" },
     { "Alt+o",      "url" },
+    { "Alt+e",      "editor" },
     { "F1",         "help" },
     { NULL, NULL }
   };
@@ -1072,6 +1073,25 @@ static void bracketed_paste_enable(void)
     atexit(bracketed_paste_disable);
     atexit_done = TRUE;
   }
+}
+
+//  scr_suspend(), scr_resume()
+// Give the terminal to another program (external editor), and take it back.
+void scr_suspend(void)
+{
+  bracketed_paste_disable();
+  def_prog_mode();
+  endwin();
+  fflush(stdout);
+}
+
+void scr_resume(void)
+{
+  reset_prog_mode();
+  bracketed_paste_enable();
+  // Redraw everything (the terminal may also have been resized)
+  readline_refresh_screen();
+  scr_do_update();
 }
 
 void scr_init_curses(void)
