@@ -1,9 +1,18 @@
 -- A modern look: rounded frames, a dark palette (24-bit colors, which are
--- approximated on terminals with less colors), status icons and compact
--- formats.
+-- approximated on terminals with less colors), status icons, compact
+-- formats and a main status line made of rounded "islands".
+--
 -- Usage: mc.theme(require "mcabber.themes.modern")
 --
+-- The rounded ends of the islands use Powerline glyphs (a Nerd Font is
+-- needed).  Other characters can be chosen:
+--   mc.theme(require("mcabber.themes.modern").with { caps = { "▐", "▌" } })
+--   mc.theme(require("mcabber.themes.modern").with { caps = false })  -- none
+--
 -- The palette is inspired by "Tokyo Night".
+local function make(opts)
+opts = opts or {}
+
 local c = {
   bg      = "#1a1b26",
   bg_alt  = "#24283b",
@@ -20,7 +29,16 @@ local c = {
   magenta = "#bb9af7",
 }
 
-return {
+-- Ends of the islands of the main status line
+local caps = opts.caps
+if caps == nil then
+  caps = { "\238\130\182", "\238\130\180" }  -- U+E0B6, U+E0B4
+elseif caps == false then
+  caps = { " ", " " }
+end
+local L, R = caps[1], caps[2]
+
+local theme = {
   name = "modern",
 
   options = {
@@ -34,7 +52,7 @@ return {
   },
 
   background   = c.bg,
-  bgstatus     = c.bg_alt,
+  bgstatus     = c.bg,
   bgrostersel  = c.bg_sel,
   general      = { fg = c.fg },
   msgin        = { fg = c.fg },
@@ -44,7 +62,7 @@ return {
   timestamp    = { fg = c.fg_dim },
   readmark     = { fg = c.red },
   log          = { fg = c.comment },
-  status       = { fg = c.fg },
+  status       = { fg = c.fg, bg = c.bg },
   roster       = { fg = c.fg },
   rostersel    = { fg = c.fg, bold = true },
   rosterselmsg = { fg = c.red, bold = true },
@@ -110,9 +128,42 @@ return {
                   .. "{?msg} {#dim}— {msg:*}{#}{/} "
                   .. "{>}{?chatstate} {#dim}{chatstate}{#} {/}",
     input_prompt = "{#input_prompt}{?command}:{/}{!command}❯{/}{#} ",
-    main_status = " {?unread}{#roster_unread}{unread}{#} {/}"
-                  .. "{#status_$status}{icon}{#} {status}"
-                  .. "{?msg}{#dim} — {msg:*}{#}{/}"
-                  .. "{>}{?info}{info} {/}{#dim}{jid}{#} ",
+    main_status = " {#isl_cap_$status}"
+                  .. L .. "{#}{#isl_$status}{icon} {status}{#}"
+                  .. "{#isl_cap_$status}" .. R .. "{#}"
+                  .. "{?unread} {#isl_cap_unread}" .. L .. "{#}"
+                  .. "{#isl_unread}{unread}{#}{#isl_cap_unread}" .. R .. "{#}{/}"
+                  .. "{?msg} {#isl_cap}" .. L .. "{#}{#isl}{msg:*}{#}"
+                  .. "{#isl_cap}" .. R .. "{#}{/}"
+                  .. "{>}{?info}{#isl_cap}" .. L .. "{#}{#isl}{info}{#}"
+                  .. "{#isl_cap}" .. R .. "{#} {/}"
+                  .. "{#isl_cap}" .. L .. "{#}{#isl}{jid}{#}"
+                  .. "{#isl_cap}" .. R .. "{#} ",
   },
 }
+
+-- Islands: the content has a background color, the ends have it as
+-- foreground color on the background of the status line.
+local function island(name, bg, fg)
+  theme["isl" .. name] = { fg = fg or c.bg, bg = bg, bold = true }
+  theme["isl_cap" .. name] = { fg = bg, bg = c.bg }
+end
+island("", c.bg_sel, c.fg)
+island("_unread", c.yellow)
+island("_online", c.green)
+island("_free", c.green)
+island("_away", c.yellow)
+island("_notavail", c.orange)
+island("_dnd", c.red)
+island("_invisible", c.fg_dim)
+island("_offline", c.fg_dim)
+island("_unknown", c.fg_dim)
+theme.isl.bold = nil
+
+return theme
+end
+
+local M = make()
+-- require("mcabber.themes.modern").with { caps = { "left", "right" } }
+M.with = function(opts) return make(opts) end
+return M

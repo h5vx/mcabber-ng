@@ -573,6 +573,12 @@ COMMANDS RELATED TO MCABBER
         Note: this status will be overridden by subsequent "/status" commands.  If you are using the auto-away feature, the status will overridden too. +
         Note: The jid can include a resource (i.e. \user@server/resource).
 
+/members [show|hide|toggle]::
+        Show or hide the members of the current room (see USER INTERFACE).
+
+/console [show|hide|toggle|clear]::
+        Display the XMPP console (see USER INTERFACE).  'clear' empties it.
+
 /version::
         Display current version of mcabber.
 
@@ -766,6 +772,25 @@ The default format is:
 
 USER INTERFACE
 --------------
+Input line::
+        The input line is below the chat window ('input_position' option:
+        "chat", the default, or "bottom" for the bottom of the screen, as
+        in the original mcabber).
+
+Members of a room::
+        The members of the current room are displayed next to the chat
+        window ('muc_members' option: "column", the default; "overlay" to
+        display them over the chat window, using only the needed height;
+        "none").  'muc_members_width' sets the width (default 20),
+        'muc_members_left' puts the column on the left.  The /members
+        command shows or hides the list.  mc.format.members formats the
+        items (fields: name, role, role_char, affil, status, icon, self).
+
+XMPP console::
+        /console displays the XML stream (the SASL credentials are masked).
+        While the console is displayed, text typed in the input line is
+        sent to the server as raw XML (commands still work).
+
 Frames::
         The 'ui_borders' option draws frames around the windows: "rounded",
         "single", "double", "heavy", "ascii" or "none" (default).  The titles
@@ -806,7 +831,11 @@ Input prompt::
 
 Themes::
         Themes are provided as Lua modules, for example
-        mc.theme(require "mcabber.themes.modern").  Available themes: modern,
+        mc.theme(require "mcabber.themes.modern").  The status line of the
+        modern theme is made of rounded "islands" drawn with Powerline
+        glyphs (a Nerd Font is needed); other characters can be used with
+        mc.theme(require("mcabber.themes.modern").with { caps = { "▐", "▌" } })
+        or no caps with { caps = false }.  Available themes: modern,
         classic (the original look), and the color themes of the original
         mcabber: colorcli, light, light2, mikael-256, oliver.  A theme is a
         Lua table of styles, with 'options' and 'format' sections and an

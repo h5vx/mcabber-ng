@@ -2974,6 +2974,22 @@ Set/update/delete an annotation. If there is no text, the current item&#8217;s a
 </p>
 </dd>
 <dt class="hdlist1">
+/members [show|hide|toggle]
+</dt>
+<dd>
+<p>
+        Show or hide the members of the current room (see USER INTERFACE).
+</p>
+</dd>
+<dt class="hdlist1">
+/console [show|hide|toggle|clear]
+</dt>
+<dd>
+<p>
+        Display the XMPP console (see USER INTERFACE).  <em>clear</em> empties it.
+</p>
+</dd>
+<dt class="hdlist1">
 /version
 </dt>
 <dd>
@@ -3339,6 +3355,40 @@ message in a room), pgp, otr, encrypted, in, out, info, error, special.</p></div
 <div class="sectionbody">
 <div class="dlist"><dl>
 <dt class="hdlist1">
+Input line
+</dt>
+<dd>
+<p>
+        The input line is below the chat window (<em>input_position</em> option:
+        "chat", the default, or "bottom" for the bottom of the screen, as
+        in the original mcabber).
+</p>
+</dd>
+<dt class="hdlist1">
+Members of a room
+</dt>
+<dd>
+<p>
+        The members of the current room are displayed next to the chat
+        window (<em>muc_members</em> option: "column", the default; "overlay" to
+        display them over the chat window, using only the needed height;
+        "none").  <em>muc_members_width</em> sets the width (default 20),
+        <em>muc_members_left</em> puts the column on the left.  The /members
+        command shows or hides the list.  mc.format.members formats the
+        items (fields: name, role, role_char, affil, status, icon, self).
+</p>
+</dd>
+<dt class="hdlist1">
+XMPP console
+</dt>
+<dd>
+<p>
+        /console displays the XML stream (the SASL credentials are masked).
+        While the console is displayed, text typed in the input line is
+        sent to the server as raw XML (commands still work).
+</p>
+</dd>
+<dt class="hdlist1">
 Frames
 </dt>
 <dd>
@@ -3405,7 +3455,11 @@ Themes
 <dd>
 <p>
         Themes are provided as Lua modules, for example
-        mc.theme(require "mcabber.themes.modern").  Available themes: modern,
+        mc.theme(require "mcabber.themes.modern").  The status line of the
+        modern theme is made of rounded "islands" drawn with Powerline
+        glyphs (a Nerd Font is needed); other characters can be used with
+        mc.theme(require("mcabber.themes.modern").with { caps = { "▐", "▌" } })
+        or no caps with { caps = false }.  Available themes: modern,
         classic (the original look), and the color themes of the original
         mcabber: colorcli, light, light2, mikael-256, oliver.  A theme is a
         Lua table of styles, with <em>options</em> and <em>format</em> sections and an
@@ -3516,7 +3570,7 @@ License (GPL).</p></div>
 <div id="footer-text">
 Version 0.1.0-dev<br>
 Last updated
- 2026-10-17 05:17:50 WITA
+ 2026-10-17 14:52:18 WITA
 </div>
 </div>
 </body>

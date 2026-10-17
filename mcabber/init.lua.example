@@ -629,6 +629,18 @@ mc.set {
   -- Set use_mouse to 1 to map mouse buttons like keys (WheelUp, WheelDown...).
   -- use_mouse = 1,
 
+  -- Layout
+  -- The input line is below the chat window; set input_position to
+  -- "bottom" to put it at the bottom of the screen.
+  -- input_position = "chat",
+  --
+  -- Members of the current room: "column" (default), "overlay" (over the
+  -- chat window, with the height of the list) or "none".  /members shows
+  -- or hides them.
+  -- muc_members = "column",
+  -- muc_members_width = 20,
+  -- muc_members_left = 0,
+  --
   -- Input line
   -- Messages can have several lines: Alt+Enter (or Ctrl+j) inserts a line
   -- break.  The input line grows up to 'input_max_rows' rows (default 6).

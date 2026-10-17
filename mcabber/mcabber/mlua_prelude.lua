@@ -233,8 +233,9 @@ function mc.theme(t)
       for fk, fv in pairs(v) do
         mc.format[fk] = fv
       end
-    elseif k == "setup" then
-      -- Called after the styles have been set
+    elseif k == "setup" or type(v) == "function" then
+      -- setup is called after the styles have been set; other functions
+      -- (like "with" in the provided themes) are not styles
     elseif k == "name" then
       -- Informative only
     else
