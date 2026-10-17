@@ -62,6 +62,7 @@
 #include "paste.h"
 #include "msgformat.h"
 #include "style.h"
+#include "xmlsplit.h"
 #include "utils.h"
 #include "xmpp.h"
 #include "main.h"
@@ -117,13 +118,26 @@ typedef struct {
   char      lock;
   char      refcount; // refcount > 0 if there are other users of this struct
                       // e.g. with symlinked history
+  int       width;    // Width used to wrap the lines of hbuf
 } buffdata_t;
 
 typedef struct {
   WINDOW *win;
   PANEL  *panel;
   buffdata_t *bd;
+  gchar  *jid;        // NULL for the special buffer
 } winbuf_t;
+
+static rect_t chat_rect(gboolean room);
+static void draw_members(void);
+static void place_chatstatus(void);
+
+static void winbuf_free(gpointer data)
+{
+  winbuf_t *w = data;
+  g_free(w->jid);
+  g_free(w);
+}
 
 struct dimensions {
   int l;
@@ -137,6 +151,12 @@ static PANEL *mainstatusPanel, *chatstatusPanel;
 static PANEL *logPanel;
 static WINDOW *frameWnd;      // Frames (ui_borders), behind the other windows
 static PANEL *framePanel;
+static WINDOW *membersWnd;    // Members of the current room
+static PANEL *membersPanel;
+static gboolean members_hidden;   // "/members hide"
+static gboolean members_shown;    // The members panel is displayed
+static winbuf_t *consoleWindow;   // XMPP console
+static gboolean console_shown;
 static int maxY, maxX;
 static int prev_chatwidth;
 static winbuf_t *statusWindow;
@@ -1145,7 +1165,7 @@ guint scr_getprefixwidth(void)
 // message).
 guint scr_gettextwidth(void)
 {
-  return Layout.chat.w;
+  return chat_rect(FALSE).w;
 }
 
 guint scr_gettextheight(void)
@@ -1281,6 +1301,60 @@ int scr_buddy_buffer_exists(const char *bjid)
 
 //  scr_new_buddy(title, dontshow)
 // Note: title (aka winId/jid) can be NULL for special buffers
+/* -- Geometry of the chat window -- */
+
+//  chat_rect(room)
+// Position of the chat window: rooms leave room for the members column.
+static rect_t chat_rect(gboolean room)
+{
+  rect_t r = Layout.chat;
+
+  if (room || !Layout.members.w)
+    return r;
+  r.w += Layout.members.w + (Layout.borders ? 1 : 0);
+  if (Layout.members.x < Layout.chat.x)
+    r.x = Layout.members.x;
+  return r;
+}
+
+static gboolean winbuf_is_room(winbuf_t *w)
+{
+  return w && w->jid && roster_find(w->jid, jidsearch, ROSTER_TYPE_ROOM);
+}
+
+//  sync_buffer_width(w)
+// Rewrap the lines of the buffer if the width of its window has changed.
+static int sync_buffer_width(winbuf_t *w)
+{
+  int width = chat_rect(winbuf_is_room(w)).w;
+
+  if (w->bd->width != width) {
+    w->bd->top = hbuf_previous_persistent(w->bd->top);
+    hbuf_rebuild(&w->bd->hbuf, width);
+    w->bd->width = width;
+  }
+  return width;
+}
+
+//  place_chat_window(w)
+// Move/resize the (shared) chat window for this buffer.
+static void place_chat_window(winbuf_t *w)
+{
+  rect_t r = chat_rect(winbuf_is_room(w));
+  int y, x, h, ww;
+
+  getbegyx(w->win, y, x);
+  getmaxyx(w->win, h, ww);
+  if (y != r.y || x != r.x || h != MAX(r.h, 1) || ww != MAX(r.w, 1)) {
+    wresize(w->win, MAX(r.h, 1), MAX(r.w, 1));
+    mvwin(w->win, r.y, r.x);
+    if (w->panel)
+      replace_panel(w->panel, w->win);
+    werase(w->win);
+  }
+  sync_buffer_width(w);
+}
+
 static winbuf_t *scr_new_buddy(const char *title, int dont_show)
 {
   winbuf_t *tmp;
@@ -1290,6 +1364,7 @@ static winbuf_t *scr_new_buddy(const char *title, int dont_show)
 
   tmp->win = activechatWnd;
   tmp->panel = activechatPanel;
+  tmp->jid = g_strdup(title);
 
   if (!dont_show) {
     currentWindow = tmp;
@@ -1319,7 +1394,9 @@ static winbuf_t *scr_new_buddy(const char *title, int dont_show)
     g_free(id);
   } else {  // Load buddy history from file (if enabled)
     tmp->bd = g_new0(buffdata_t, 1);
-    hlog_read_history(title, &tmp->bd->hbuf, scr_gettextwidth());
+    tmp->bd->width = chat_rect(roster_find(title, jidsearch,
+                                           ROSTER_TYPE_ROOM) != NULL).w;
+    hlog_read_history(title, &tmp->bd->hbuf, tmp->bd->width);
 
     // Set a readmark to separate new content
     hbuf_set_readmark(tmp->bd->hbuf, TRUE);
@@ -1495,6 +1572,8 @@ static void scr_update_window(winbuf_t *win_entry)
 
   autolock = settings_opt_get_int("buffer_smart_scrolling");
 
+  place_chat_window(win_entry);
+
   // Should the window be empty?
   if (win_entry->bd->cleared) {
     werase(win_entry->win);
@@ -1665,7 +1744,11 @@ static void scr_show_window(const char *winId, int special)
     win_entry = scr_create_window(winId, special, FALSE);
   }
 
+  console_shown = FALSE;
   top_panel(win_entry->panel);
+  // The splash window is wider than a room window: hide it
+  // (top_panel() shows it again)
+  hide_panel(chatPanel);
   currentWindow = win_entry;
   chatmode = TRUE;
   if (!win_entry->bd->lock)
@@ -1676,6 +1759,7 @@ static void scr_show_window(const char *winId, int special)
 
   // Refresh the window
   scr_update_window(win_entry);
+  draw_members();
 
   // Finished :)
   update_panels();
@@ -1773,7 +1857,8 @@ static void scr_write_in_window(const char *winId, const char *text,
   text_locale = from_utf8(text);
   nick_locale = from_utf8(nick);
   hbuf_add_line(&win_entry->bd->hbuf, text_locale, nick_locale, timestamp,
-                prefix_flags, scr_gettextwidth(), num_history_blocks, xep184);
+                prefix_flags, sync_buffer_width(win_entry),
+                num_history_blocks, xep184);
   g_free(text_locale);
   g_free(nick_locale);
 
@@ -1961,6 +2046,28 @@ main_status_done:
   g_free(sm);
 }
 
+/* -- Members of the current room -- */
+
+enum { MEMBERS_NONE, MEMBERS_COLUMN, MEMBERS_OVERLAY };
+
+//  members_mode()
+// muc_members option: "column" (default), "overlay" or "none".
+static int members_mode(void)
+{
+  const char *m = settings_opt_get("muc_members");
+  if (m && (!strcmp(m, "none") || !strcmp(m, "0") || !strcmp(m, "off")))
+    return MEMBERS_NONE;
+  if (m && !strcmp(m, "overlay"))
+    return MEMBERS_OVERLAY;
+  return MEMBERS_COLUMN;
+}
+
+static int members_width(void)
+{
+  int w = settings_opt_get_int("muc_members_width");
+  return w > 2 ? w : 20;
+}
+
 /* -- Frames -- */
 
 typedef struct {
@@ -2044,7 +2151,12 @@ static void draw_frames(void)
   const frame_chars_t *fc = frame_chars();
   const ui_layout_t *l = &Layout;
   int y, x;
-  int chat_top = l->chat.y, chat_bot = l->chat.y + l->chat.h - 1;
+  // Rows of the line between the roster and the chat column
+  int vtop = l->roster.y, vbot = l->roster.y + l->roster.h - 1;
+  // Rows of the line between the chat window and the members column
+  gboolean msep = members_shown && members_mode() == MEMBERS_COLUMN &&
+                  l->frame_msep >= 0;
+  int mtop = l->chat.y, mbot = l->chat.y + l->chat.h - 1;
 
   werase(frameWnd);
   if (!fc || !l->borders)
@@ -2052,7 +2164,6 @@ static void draw_frames(void)
 
   wattrset(frameWnd, named_style_attr("border", COLOR_GENERAL));
 
-  // Horizontal lines
   for (y = l->frame_top; y <= l->frame_bottom; y++) {
     const char *left, *right;
     if (y == l->frame_top) {
@@ -2065,20 +2176,38 @@ static void draw_frames(void)
       // Vertical lines
       mvwaddstr(frameWnd, y, l->frame_left, fc->v);
       mvwaddstr(frameWnd, y, l->frame_right, fc->v);
-      if (l->frame_vsep >= 0 && y >= chat_top && y <= chat_bot)
+      if (l->frame_vsep >= 0 && y >= vtop && y <= vbot)
         mvwaddstr(frameWnd, y, l->frame_vsep, fc->v);
+      if (msep && y >= mtop && y <= mbot)
+        mvwaddstr(frameWnd, y, l->frame_msep, fc->v);
+      if (y == l->frame_isep) {
+        // Line between the chat window and the input line
+        int x0 = l->input.x - 1, x1 = l->input.x + l->input.w;
+        mvwaddstr(frameWnd, y, x0, fc->lt);
+        for (x = x0 + 1; x < x1; x++)
+          waddstr(frameWnd, fc->h);
+        waddstr(frameWnd, fc->rt);
+        if (msep)
+          mvwaddstr(frameWnd, y, l->frame_msep, fc->bt);
+      }
       continue;
     }
     mvwaddstr(frameWnd, y, l->frame_left, left);
     for (x = l->frame_left + 1; x < l->frame_right; x++)
       waddstr(frameWnd, fc->h);
     waddstr(frameWnd, right);
-    // Junctions with the line between the roster and the chat window
+    // Junctions with the vertical lines
     if (l->frame_vsep >= 0) {
-      if (y == chat_top - 1)
+      if (y == vtop - 1)
         mvwaddstr(frameWnd, y, l->frame_vsep, fc->tt);
-      else if (y == chat_bot + 1)
+      else if (y == vbot + 1)
         mvwaddstr(frameWnd, y, l->frame_vsep, fc->bt);
+    }
+    if (msep) {
+      if (y == mtop - 1)
+        mvwaddstr(frameWnd, y, l->frame_msep, fc->tt);
+      else if (y == mbot + 1)
+        mvwaddstr(frameWnd, y, l->frame_msep, fc->bt);
     }
   }
 
@@ -2086,6 +2215,9 @@ static void draw_frames(void)
   if (l->roster.w > 6)
     draw_title(l->roster.y - 1, l->roster.x + 1, l->roster.w - 2,
                "ui_title_roster", "Roster");
+  if (msep && l->members.w > 6)
+    draw_title(l->members.y - 1, l->members.x + 1, l->members.w - 2,
+               "ui_title_members", "Members");
   if (l->log.h > 0)
     draw_title(l->log.y - 1, l->log.x + 1, l->log.w - 2,
                "ui_title_log", "Log");
@@ -2133,6 +2265,13 @@ void scr_draw_main_window(unsigned int fullinit)
   lopts.roster_on_right = roster_win_on_right;
   lopts.input_height = Input_Win_Height;
   lopts.borders = (frame_chars() != NULL);
+  {
+    const char *pos = settings_opt_get("input_position");
+    lopts.input_in_chat = !(pos && !strcmp(pos, "bottom"));
+  }
+  lopts.members_width = (members_mode() == MEMBERS_COLUMN && !members_hidden) ?
+                        members_width() : 0;
+  lopts.members_on_left = settings_opt_get_int("muc_members_left") == 1;
   layout_compute(&lopts, &Layout);
   Log_Win_Height = Layout.log.h;
   Roster_Width = Layout.roster.w;
@@ -2144,11 +2283,12 @@ void scr_draw_main_window(unsigned int fullinit)
   if (fullinit) {
     if (!winbufhash)
       winbufhash = g_hash_table_new_full(g_str_hash, g_str_equal,
-                                         g_free, g_free);
+                                         g_free, winbuf_free);
     /* Create windows */
     frameWnd  = newwin(maxY, maxX, 0, 0);
+    membersWnd = newwin(1, 1, 0, 0);
     rosterWnd = NEWWIN(Layout.roster);
-    chatWnd   = NEWWIN(Layout.chat);
+    chatWnd   = NEWWIN(chat_rect(FALSE));
     activechatWnd = NEWWIN(Layout.chat);
     logWnd    = NEWWIN(Layout.log);
     chatstatusWnd = NEWWIN(Layout.chatstatus);
@@ -2168,7 +2308,7 @@ void scr_draw_main_window(unsigned int fullinit)
   } else {
     /* Resize/move windows */
     MOVEWIN(rosterWnd, Layout.roster);
-    MOVEWIN(chatWnd, Layout.chat);
+    MOVEWIN(chatWnd, chat_rect(FALSE));
     MOVEWIN(logWnd, Layout.log);
     MOVEWIN(chatstatusWnd, Layout.chatstatus);
     MOVEWIN(mainstatusWnd, Layout.mainstatus);
@@ -2202,6 +2342,8 @@ void scr_draw_main_window(unsigned int fullinit)
 
     // Create panels
     framePanel  = new_panel(frameWnd);
+    membersPanel = new_panel(membersWnd);
+    hide_panel(membersPanel);
     rosterPanel = new_panel(rosterWnd);
     chatPanel   = new_panel(chatWnd);
     activechatPanel = new_panel(activechatWnd);
@@ -2243,6 +2385,7 @@ void scr_draw_main_window(unsigned int fullinit)
   }
 
   // Frames are behind everything
+  place_chatstatus();
   if (Layout.borders) {
     draw_frames();
     show_panel(framePanel);
@@ -2267,19 +2410,11 @@ static void resize_win_buffer(gpointer key, gpointer value, gpointer data)
   if (!(wbp && wbp->win))
     return;
 
-  // Resize/move buddy window
-  wresize(wbp->win, dim->l, dim->c);
-  mvwin(wbp->win, Layout.chat.y, Layout.chat.x);
-  werase(wbp->win);
-  // If a panel exists, replace the old window with the new
-  if (wbp->panel)
-    replace_panel(wbp->panel, wbp->win);
-  // Redo line wrapping
-  wbp->bd->top = hbuf_previous_persistent(wbp->bd->top);
-
-  new_chatwidth = Layout.chat.w;
-  if (new_chatwidth != prev_chatwidth)
-    hbuf_rebuild(&wbp->bd->hbuf, new_chatwidth);
+  // The window is placed when the buffer is displayed (it is shared by
+  // all buffers); the lines are wrapped again if needed.
+  (void)dim;
+  (void)new_chatwidth;
+  sync_buffer_width(wbp);
 }
 
 //  scr_resize()
@@ -2472,6 +2607,15 @@ void scr_update_chat_status(int forceupdate)
     wmove(chatstatusWnd, 0, 0);
   }
 
+  if (console_shown) {
+    wattrset(chatstatusWnd, A_BOLD);
+    mvwprintw(chatstatusWnd, 0, 1, " XMPP console ");
+    wattrset(chatstatusWnd, A_NORMAL);
+    if (forceupdate)
+      update_panels();
+    return;
+  }
+
   if (!current_buddy) {
     if (forceupdate) {
       update_panels();
@@ -2618,6 +2762,350 @@ void increment_if_buddy_not_filtered(gpointer rosterdata, void *param)
     *p=*p+1;
 }
 
+/* -- Members panel (muc_members option, mc.format.members) -- */
+
+typedef struct {
+  gchar *name;
+  enum imrole role;
+  enum imaffiliation affil;
+  enum imstatus status;
+  gboolean self;
+} member_t;
+
+static int role_rank(enum imrole r)
+{
+  switch (r) {
+    case role_moderator:   return 0;
+    case role_participant: return 1;
+    case role_visitor:     return 2;
+    default:               return 3;
+  }
+}
+
+static gint member_cmp(gconstpointer a, gconstpointer b)
+{
+  const member_t *x = *(member_t * const *)a, *y = *(member_t * const *)b;
+  gchar *kx, *ky;
+  gint r = role_rank(x->role) - role_rank(y->role);
+
+  if (r)
+    return r;
+  kx = g_utf8_casefold(x->name, -1);
+  ky = g_utf8_casefold(y->name, -1);
+  r = g_utf8_collate(kx, ky);
+  g_free(kx);
+  g_free(ky);
+  return r;
+}
+
+static void member_free(gpointer data)
+{
+  member_t *m = data;
+  g_free(m->name);
+  g_free(m);
+}
+
+static char role_char(enum imrole r)
+{
+  return r == role_moderator ? '@' : r == role_participant ? '+' : ' ';
+}
+
+static const char *const member_fields[] = {
+  "name", "role", "role_char", "affil", "status", "icon", "self", NULL
+};
+
+static gchar *member_field(const char *name, const char *arg, gpointer data)
+{
+  member_t *m = data;
+
+  if (!strcmp(name, "name"))
+    return g_strdup(m->name);
+  if (!strcmp(name, "role"))
+    return m->role != role_none ? g_strdup(strrole[m->role]) : NULL;
+  if (!strcmp(name, "role_char"))
+    return g_strdup_printf("%c", role_char(m->role));
+  if (!strcmp(name, "affil"))
+    return m->affil != affil_none ? g_strdup(straffil[m->affil]) : NULL;
+  if (!strcmp(name, "status"))
+    return g_strdup(mlua_status_name(m->status));
+  if (!strcmp(name, "icon"))
+    return status_icon(mlua_status_name(m->status), imstatus2char[m->status]);
+  if (!strcmp(name, "self"))
+    return m->self ? g_strdup("1") : NULL;
+  return NULL;
+}
+
+//  place_chatstatus()
+// With frames, the chat status line is in the frame above the chat window,
+// whose width depends on the members column.
+static void place_chatstatus(void)
+{
+  if (Layout.borders) {
+    rect_t c = chat_rect(members_shown && members_mode() == MEMBERS_COLUMN);
+    rect_t r = { Layout.chatstatus.y, c.x + 1, 1, MAX(c.w - 2, 1) };
+    MOVEWIN(chatstatusWnd, r);
+    replace_panel(chatstatusPanel, chatstatusWnd);
+  }
+}
+
+//  draw_members()
+// Display the members of the current room (if this is a room).
+static void draw_members(void)
+{
+  gboolean show = chatmode && currentWindow && winbuf_is_room(currentWindow) &&
+                  members_mode() != MEMBERS_NONE && !members_hidden;
+  const frame_chars_t *fc = frame_chars();
+  gboolean has_format = msgfmt_ui_has("members");
+  GSList *elt, *res, *p;
+  GPtrArray *list;
+  gpointer bud;
+  const char *mynick;
+  rect_t r;
+  int x0, cw, rows;
+  guint i;
+
+  if (show != members_shown) {
+    members_shown = show;
+    place_chatstatus();
+    if (Layout.borders)
+      draw_frames();
+    scr_update_chat_status(FALSE);
+  }
+  if (!show) {
+    hide_panel(membersPanel);
+    return;
+  }
+
+  elt = roster_find(currentWindow->jid, jidsearch, ROSTER_TYPE_ROOM);
+  bud = elt->data;
+  mynick = buddy_getnickname(bud);
+  list = g_ptr_array_new_with_free_func(member_free);
+  res = buddy_getresources(bud);
+  for (p = res; p; p = g_slist_next(p)) {
+    member_t *m = g_new0(member_t, 1);
+    m->name = p->data;
+    m->role = buddy_getrole(bud, m->name);
+    m->affil = buddy_getaffil(bud, m->name);
+    m->status = buddy_getstatus(bud, m->name);
+    m->self = mynick && !strcmp(mynick, m->name);
+    g_ptr_array_add(list, m);
+  }
+  g_slist_free(res);
+  g_ptr_array_sort(list, member_cmp);
+
+  if (members_mode() == MEMBERS_COLUMN) {
+    r = Layout.members;
+  } else {
+    rect_t c = chat_rect(TRUE);
+    r.w = MIN(members_width(), MAX(c.w / 2, 1));
+    r.h = MIN((int)list->len + 1, c.h);
+    r.y = c.y;
+    r.x = c.x + c.w - r.w;
+  }
+  MOVEWIN(membersWnd, r);
+  replace_panel(membersPanel, membersWnd);
+  werase(membersWnd);
+  wbkgd(membersWnd, get_color(COLOR_ROSTER));
+
+  // Separators
+  x0 = 0;
+  cw = r.w;
+  rows = r.h;
+  wattrset(membersWnd, named_style_attr("border", COLOR_GENERAL));
+  if (members_mode() == MEMBERS_COLUMN) {
+    if (!Layout.borders) {
+      int sx = (Layout.members.x < Layout.chat.x) ? r.w - 1 : 0;
+      for (i = 0; (int)i < r.h; i++)
+        mvwaddch(membersWnd, i, sx, ACS_VLINE);
+      x0 = sx ? 0 : 1;
+      cw--;
+    }
+  } else {
+    // Overlay: line on the left and at the bottom
+    for (i = 0; (int)i < r.h - 1; i++) {
+      if (fc)
+        mvwaddstr(membersWnd, i, 0, fc->v);
+      else
+        mvwaddch(membersWnd, i, 0, ACS_VLINE);
+    }
+    wmove(membersWnd, r.h - 1, 0);
+    if (fc) {
+      waddstr(membersWnd, fc->bl);
+      for (i = 1; (int)i < r.w; i++)
+        waddstr(membersWnd, fc->h);
+    } else {
+      waddch(membersWnd, ACS_LLCORNER);
+      for (i = 1; (int)i < r.w; i++)
+        waddch(membersWnd, ACS_HLINE);
+    }
+    x0 = 1;
+    cw--;
+    rows--;
+  }
+  wattrset(membersWnd, get_color(COLOR_ROSTER));
+
+  for (i = 0; i < list->len && (int)i < rows; i++) {
+    member_t *m = g_ptr_array_index(list, i);
+    sstr_t *line = sstr_new();
+    int base = get_color(COLOR_ROSTER);
+
+    wmove(membersWnd, i, x0);
+    if ((int)i == rows - 1 && list->len > (guint)rows) {
+      // Not enough room
+      gchar *more = g_strdup_printf(" … +%u", list->len - rows + 1);
+      wattrset(membersWnd, named_style_attr("dim", COLOR_ROSTER));
+      waddnstr(membersWnd, more, -1);
+      g_free(more);
+      sstr_free(line);
+      break;
+    }
+    if (has_format &&
+        msgfmt_ui("members", NULL, member_fields, member_field, m, cw, line)) {
+      draw_sstr(membersWnd, line, base, FALSE, cw);
+    } else {
+      // " @nick", the nickname colored like in the chat window
+      int attr = base;
+      gchar *t = g_strdup_printf(" %c", role_char(m->role));
+      sstr_append(line, t, -1, NULL);
+      g_free(t);
+      draw_sstr(membersWnd, line, base, TRUE, cw);
+      sstr_clear(line);
+      if (m->self)
+        attr = named_style_attr("nick_self", COLOR_ROSTER);
+      else
+        nick_color(m->name, HBB_PREFIX_IN, &attr);
+      sstr_append(line, m->name, -1, NULL);
+      draw_sstr(membersWnd, line, attr, TRUE, cw - 2);
+    }
+    sstr_free(line);
+  }
+  wattrset(membersWnd, A_NORMAL);
+  g_ptr_array_free(list, TRUE);
+
+  show_panel(membersPanel);
+  top_panel(membersPanel);
+}
+
+//  scr_members(arg)
+// /members show|hide|toggle
+void scr_members(const char *arg)
+{
+  gboolean hidden = members_hidden;
+
+  if (!arg || !*arg || !strcmp(arg, "toggle"))
+    hidden = !hidden;
+  else if (!strcmp(arg, "show"))
+    hidden = FALSE;
+  else if (!strcmp(arg, "hide"))
+    hidden = TRUE;
+  else {
+    scr_LogPrint(LPRINT_NORMAL, "Usage: /members [show|hide|toggle]");
+    return;
+  }
+  if (hidden == members_hidden)
+    return;
+  members_hidden = hidden;
+  scr_resize();
+  draw_members();
+  update_panels();
+}
+
+/* -- XMPP console -- */
+
+static void console_create(void)
+{
+  if (consoleWindow)
+    return;
+  consoleWindow = g_new0(winbuf_t, 1);
+  consoleWindow->win = activechatWnd;
+  consoleWindow->panel = activechatPanel;
+  consoleWindow->bd = g_new0(buffdata_t, 1);
+}
+
+//  scr_console_add(outgoing, data)
+// Add XML data sent to or received from the server to the console.
+void scr_console_add(gboolean outgoing, const char *data)
+{
+  gchar **parts, **p;
+  buffdata_t *bd;
+  guint flags = outgoing ? (HBB_PREFIX_OUT | HBB_PREFIX_HLIGHT_OUT)
+                         : HBB_PREFIX_IN;
+  time_t now = time(NULL);
+
+  if (!Curses || !activechatWnd)
+    return;
+  console_create();
+  bd = consoleWindow->bd;
+  parts = xml_split_stanzas(data);
+  for (p = parts; *p; p++) {
+    gchar *masked = xml_mask_secrets(*p);
+    gchar *locale = from_utf8(masked);
+    // At most 64 blocks of history (unless the buffer is scrolled)
+    hbuf_add_line(&bd->hbuf, locale ? locale : masked, NULL, now, flags,
+                  sync_buffer_width(consoleWindow),
+                  (bd->lock || bd->top) ? 0 : 64, NULL);
+    g_free(locale);
+    g_free(masked);
+  }
+  g_strfreev(parts);
+  if (console_shown)
+    scr_update_window(consoleWindow);
+}
+
+//  scr_console_shown()
+// TRUE if the XMPP console is displayed: text typed in the input line is
+// sent to the server.
+gboolean scr_console_shown(void)
+{
+  return console_shown;
+}
+
+static void console_show(void)
+{
+  console_create();
+  console_shown = TRUE;
+  chatmode = TRUE;
+  currentWindow = consoleWindow;
+  top_panel(consoleWindow->panel);
+  hide_panel(chatPanel);
+  scr_update_window(consoleWindow);
+  draw_members();
+  scr_update_chat_status(FALSE);
+  top_panel(inputPanel);
+  update_panels();
+}
+
+//  scr_console(arg)
+// /console [show|hide|toggle|clear]
+void scr_console(const char *arg)
+{
+  if (!Curses)
+    return;
+  if (!arg || !*arg || !strcmp(arg, "toggle")) {
+    arg = console_shown ? "hide" : "show";
+  }
+  if (!strcmp(arg, "show")) {
+    console_show();
+  } else if (!strcmp(arg, "hide")) {
+    if (!console_shown)
+      return;
+    console_shown = FALSE;
+    if (current_buddy)
+      scr_show_buddy_window();
+    else
+      readline_disable_chat_mode(FALSE);
+  } else if (!strcmp(arg, "clear")) {
+    if (consoleWindow) {
+      hbuf_free(&consoleWindow->bd->hbuf);
+      consoleWindow->bd->top = NULL;
+      if (console_shown)
+        scr_update_window(consoleWindow);
+    }
+  } else {
+    scr_LogPrint(LPRINT_NORMAL, "Usage: /console [show|hide|toggle|clear]");
+  }
+}
+
 /* -- Roster format (mc.format.roster) -- */
 
 typedef struct {
@@ -2727,12 +3215,13 @@ void scr_draw_roster(void)
   if (Roster_Width && !Layout.borders) {
     int line_x_pos = roster_win_on_right ? 0 : Roster_Width-1;
     // Redraw the vertical line (not very good...)
-    for (i=0 ; i < CHAT_WIN_HEIGHT ; i++)
+    for (i=0 ; i < Layout.roster.h ; i++)
       mvwaddch(rosterWnd, i, line_x_pos, ACS_VLINE);
   }
 
   // Leave now if buddylist is empty or the roster is hidden
   if (!buddylist || !Roster_Width) {
+    draw_members();
     update_panels();
     curs_set(cursor_backup);
     return;
@@ -2966,6 +3455,7 @@ void scr_draw_roster(void)
   g_free(rline);
   g_free(unread);
   g_free(name);
+  draw_members();
   top_panel(inputPanel);
   update_panels();
   curs_set(cursor_backup);
@@ -3513,6 +4003,15 @@ void scr_roster_display(const char *filter)
   scr_LogPrint(LPRINT_NORMAL, "Roster status filter: %s", strfilter);
 }
 
+//  buffer_lookup(isspe)
+// The buffer of the current buddy, or the XMPP console if it is displayed.
+static winbuf_t *buffer_lookup(guint isspe)
+{
+  if (console_shown && consoleWindow)
+    return consoleWindow;
+  return scr_search_window(CURRENT_JID, isspe);
+}
+
 //  scr_buffer_scroll_up_down()
 // Scroll up/down the current buddy window,
 // - half a screen if nblines is 0,
@@ -3528,7 +4027,7 @@ void scr_buffer_scroll_up_down(int updown, unsigned int nblines)
   if (!current_buddy) return;
 
   isspe = buddy_gettype(BUDDATA(current_buddy)) & ROSTER_TYPE_SPECIAL;
-  win_entry  = scr_search_window(CURRENT_JID, isspe);
+  win_entry = buffer_lookup(isspe);
   if (!win_entry) return;
 
   if (!nblines) {
@@ -3582,7 +4081,7 @@ void scr_buffer_clear(void)
   // Get win_entry
   if (!current_buddy) return;
   isspe = buddy_gettype(BUDDATA(current_buddy)) & ROSTER_TYPE_SPECIAL;
-  win_entry = scr_search_window(CURRENT_JID, isspe);
+  win_entry = buffer_lookup(isspe);
   if (!win_entry) return;
 
   win_entry->bd->cleared = TRUE;
@@ -3730,7 +4229,7 @@ void scr_buffer_scroll_lock(int lock)
   // Get win_entry
   if (!current_buddy) return;
   isspe = buddy_gettype(BUDDATA(current_buddy)) & ROSTER_TYPE_SPECIAL;
-  win_entry = scr_search_window(CURRENT_JID, isspe);
+  win_entry = buffer_lookup(isspe);
   if (!win_entry) return;
 
   if (lock == -1)
@@ -3775,7 +4274,7 @@ void scr_buffer_readmark(gchar action)
   if (!current_buddy) return;
   isspe = buddy_gettype(BUDDATA(current_buddy)) & ROSTER_TYPE_SPECIAL;
   if (isspe) return; // Maybe not necessary
-  win_entry = scr_search_window(CURRENT_JID, isspe);
+  win_entry = buffer_lookup(isspe);
   if (!win_entry) return;
 
   autolock = settings_opt_get_int("buffer_smart_scrolling");
@@ -3799,7 +4298,7 @@ void scr_buffer_top_bottom(int topbottom)
   // Get win_entry
   if (!current_buddy) return;
   isspe = buddy_gettype(BUDDATA(current_buddy)) & ROSTER_TYPE_SPECIAL;
-  win_entry = scr_search_window(CURRENT_JID, isspe);
+  win_entry = buffer_lookup(isspe);
   if (!win_entry) return;
 
   win_entry->bd->cleared = FALSE;
@@ -3827,7 +4326,7 @@ void scr_buffer_search(int direction, const char *text)
   // Get win_entry
   if (!current_buddy) return;
   isspe = buddy_gettype(BUDDATA(current_buddy)) & ROSTER_TYPE_SPECIAL;
-  win_entry = scr_search_window(CURRENT_JID, isspe);
+  win_entry = buffer_lookup(isspe);
   if (!win_entry) return;
 
   if (win_entry->bd->top)
@@ -3861,7 +4360,7 @@ void scr_buffer_percent(int pc)
   // Get win_entry
   if (!current_buddy) return;
   isspe = buddy_gettype(BUDDATA(current_buddy)) & ROSTER_TYPE_SPECIAL;
-  win_entry = scr_search_window(CURRENT_JID, isspe);
+  win_entry = buffer_lookup(isspe);
   if (!win_entry) return;
 
   if (pc < 0 || pc > 100) {
@@ -3893,7 +4392,7 @@ void scr_buffer_date(time_t t)
   // Get win_entry
   if (!current_buddy) return;
   isspe = buddy_gettype(BUDDATA(current_buddy)) & ROSTER_TYPE_SPECIAL;
-  win_entry = scr_search_window(CURRENT_JID, isspe);
+  win_entry = buffer_lookup(isspe);
   if (!win_entry) return;
 
   search_res = hbuf_jump_date(win_entry->bd->hbuf, t);
@@ -3923,7 +4422,7 @@ void scr_buffer_jump_readmark(void)
   if (!current_buddy) return;
   isspe = buddy_gettype(BUDDATA(current_buddy)) & ROSTER_TYPE_SPECIAL;
   if (isspe) return;
-  win_entry = scr_search_window(CURRENT_JID, isspe);
+  win_entry = buffer_lookup(isspe);
   if (!win_entry) return;
 
   search_res = hbuf_jump_readmark(win_entry->bd->hbuf);
@@ -4453,7 +4952,15 @@ void readline_accept_line(int down_history)
   }
 
   last_activity_buddy = current_buddy;
-  process_line(inputLine);
+  if (console_shown && inputLine[0] && inputLine[0] != COMMAND_CHAR) {
+    // XMPP console: send raw XML
+    gchar *xml = g_locale_to_utf8(inputLine, -1, NULL, NULL, NULL);
+    if (xml && !xmpp_send_raw(xml))
+      scr_LogPrint(LPRINT_NORMAL, "You are not connected.");
+    g_free(xml);
+  } else {
+    process_line(inputLine);
+  }
   // Add line to history
   scr_cmdhisto_addline(inputLine);
   // Reset the line
@@ -4522,12 +5029,14 @@ void readline_disable_chat_mode(guint show_roster)
   }
   currentWindow = NULL;
   chatmode = FALSE;
+  console_shown = FALSE;
   if (current_buddy)
     buddy_setflags(BUDDATA(current_buddy), ROSTER_FLAG_LOCK, FALSE);
   if (show_roster)
     scr_roster_visibility(1);
   scr_update_chat_status(FALSE);
   top_panel(chatPanel);
+  draw_members();
   top_panel(inputPanel);
   update_panels();
 }
@@ -4929,10 +5438,11 @@ static guint input_prompt(sstr_t *out)
 {
   if (!msgfmt_ui_has("input_prompt"))
     return 0;
+  int w = Layout.input.w ? Layout.input.w : maxX;
   if (!msgfmt_ui("input_prompt", NULL, prompt_fields, prompt_field, NULL,
-                 maxX / 3, out))
+                 w / 3, out))
     return 0;
-  return MIN(out->width, (guint)maxX / 3);
+  return MIN(out->width, (guint)w / 3);
 }
 
 //  input_text_width()
@@ -4941,8 +5451,9 @@ static guint input_text_width(void)
 {
   sstr_t *p = sstr_new();
   guint w = input_prompt(p);
+  int width = Layout.input.w ? Layout.input.w : maxX;
   sstr_free(p);
-  return maxX > (int)w + 1 ? maxX - w : 1;
+  return width > (int)w + 1 ? width - w : 1;
 }
 
 //  input_max_rows()
@@ -4966,7 +5477,7 @@ static void refresh_inputline(void)
 
   pw = input_prompt(prompt);
   il_layout(inputLine, ptr_inputline - inputLine,
-            maxX > (int)pw + 1 ? maxX - pw : 1, &InputLayout);
+            width > (int)pw + 1 ? width - pw : 1, &InputLayout);
 
   height = MIN(InputLayout.rows, input_max_rows());
   if (height != (guint)Input_Win_Height) {
@@ -5273,8 +5784,8 @@ static void rebuild_win_buffer(gpointer key, gpointer value, gpointer data)
   winbuf_t *wbp = value;
   if (!(wbp && wbp->bd))
     return;
-  wbp->bd->top = hbuf_previous_persistent(wbp->bd->top);
-  hbuf_rebuild(&wbp->bd->hbuf, Layout.chat.w);
+  wbp->bd->width = 0;   // Force the rewrapping
+  sync_buffer_width(wbp);
 }
 
 void scr_do_update(void)

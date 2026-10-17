@@ -1714,11 +1714,56 @@ typedef enum {
         LM_LOG_LEVEL_SASL)
 } LmLogLevelFlags;
 
+//  console_capture(message)
+// Loudmouth logs the network data in several messages:
+//   "SEND:" or "RECV [n]:", a line of dashes, the data ('quoted' when it
+//   is received), and a line of dashes.
+static void console_capture(const char *message)
+{
+  static enum { IDLE, HEADER, DATA } state;
+  static gboolean outgoing;
+  const char *p = message;
+
+  while (*p == '\n')
+    p++;
+  if (!strncmp(p, "SEND:", 5) || !strncmp(p, "RECV", 4)) {
+    outgoing = (*p == 'S');
+    state = HEADER;
+  } else if (!strncmp(p, "---", 3)) {
+    state = (state == HEADER) ? DATA : IDLE;
+  } else if (state == DATA) {
+    gsize len = strlen(p);
+    gchar *xml;
+    while (len && (p[len-1] == '\n' || p[len-1] == '\r'))
+      len--;
+    if (!outgoing && len >= 2 && p[0] == '\'' && p[len-1] == '\'') {
+      p++;
+      len -= 2;
+    }
+    xml = g_strndup(p, len);
+    scr_console_add(outgoing, xml);
+    g_free(xml);
+  }
+}
+
+//  xmpp_send_raw(xml)
+// Send raw XML data.  Returns FALSE if we are not connected.
+gboolean xmpp_send_raw(const char *xml)
+{
+  if (!xmpp_is_online())
+    return FALSE;
+  lm_connection_send_raw(lconnection, xml, NULL);
+  return TRUE;
+}
+
 static void lm_debug_handler (const gchar    *log_domain,
                               GLogLevelFlags  log_level,
                               const gchar    *message,
                               gpointer        user_data)
 {
+  if (message && (log_level & LM_LOG_LEVEL_NET))
+    console_capture(message);
+
   if (message && *message) {
     char *msg;
     int mcabber_loglevel = settings_opt_get_int("tracelog_level");

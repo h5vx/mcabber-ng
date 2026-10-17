@@ -15,6 +15,25 @@
  * along with this program; if not, see <http://www.gnu.org/licenses/>.
  */
 
+/* Without frames, from top to bottom:
+ *   chat area: roster and chat column (chat window, chat status line,
+ *              and the input line when input_in_chat is set)
+ *   log window
+ *   main status line
+ *   input line (when input_in_chat is not set)
+ * The log window can be above the chat area, the roster on the right.
+ *
+ * With frames (input_in_chat):
+ *   ╭─ Roster ─┬─ chat status ─────────┬─ Members ─╮
+ *   │ roster   │ chat                  │ members   │
+ *   │          ├───────────────────────┴───────────┤
+ *   │          │ input                             │
+ *   ├─ Log ────┴───────────────────────────────────┤
+ *   │ log                                          │
+ *   ╰──────────────────────────────────────────────╯
+ *    main status line
+ */
+
 #include "layout.h"
 
 static void set_rect(rect_t *r, int y, int x, int h, int w)
@@ -25,125 +44,150 @@ static void set_rect(rect_t *r, int y, int x, int h, int w)
   r->w = MAX(w, 0);
 }
 
-//  layout_compute(opts, layout)
-// From top to bottom: chat area (roster + chat window), chat status line,
-// log window, main status line, input line.  The log window can be put
-// above the chat area and the roster on the right.
-// The chat area always has at least one line: the input line and the log
-// window are reduced if needed.
-//  layout_borders(opts, layout)
-// Layout with frames:
-//   ╭─ Roster ─┬─ chat status ────╮
-//   │ roster   │ chat             │
-//   ├──────────┴─ Log ────────────┤
-//   │ log                         │
-//   ╰─────────────────────────────╯
-//    main status line
-//    input line
-// Returns FALSE if the terminal is too small.
-static gboolean layout_borders(const layout_opts_t *o, ui_layout_t *l)
+//  compute(opts, layout, borders)
+// Returns FALSE if the terminal is too small for this layout.
+static gboolean compute(const layout_opts_t *o, ui_layout_t *l, gboolean b)
 {
-  int lines = o->lines, cols = o->cols;
-  int input_h, frame_h, log_h, chat_h, roster_w, chat_y, log_y;
-  int inner_w, chat_x, chat_w, roster_x;
+  int lines = MAX(o->lines, 4);
+  int cols = MAX(o->cols, 1);
+  gboolean in_chat = o->input_in_chat;
+  int avail = lines - 1;          // All the rows but the main status line
+  int frames = b ? 2 : 0;         // Top and bottom frame lines
+  int status_row = b ? 0 : 1;     // Chat status line (in a frame if b)
+  int isep = (b && in_chat) ? 1 : 0;
+  int input_h, log_h, chat_h, log_rows, y;
+  int inner_x, inner_w, roster_w, col_x, col_w, members_w;
+  int roster_x, chat_x, chat_w, members_x;
 
-  input_h = MAX(o->input_height, 1);
-  frame_h = lines - input_h - 1;      // Rows above the main status line
-  if (frame_h < 3 || cols < 4) {
-    // Try with a smaller input line
-    input_h = 1;
-    frame_h = lines - 2;
-    if (frame_h < 3 || cols < 4)
-      return FALSE;
-  }
+  l->borders = b;
+  l->frame_top = l->frame_mid = l->frame_bottom = l->frame_isep = -1;
+  l->frame_left = l->frame_vsep = l->frame_right = l->frame_msep = -1;
 
-  log_h = CLAMP(o->log_height, 0, frame_h - 4);
-  chat_h = frame_h - 2 - (log_h ? log_h + 1 : 0);
+  // Rows.  The chat window has at least one line; the input line is
+  // reduced first, then the log window.
+  input_h = CLAMP(o->input_height, 1,
+                  MAX(avail - frames - status_row - isep - 1, 1));
+  if (avail - frames - status_row - isep - input_h < 1)
+    return FALSE;
+  log_h = CLAMP(o->log_height, 0,
+                avail - frames - status_row - isep - input_h - 1 - (b ? 1:0));
+  log_rows = log_h ? log_h + (b ? 1 : 0) : 0;
+  chat_h = avail - frames - status_row - isep - input_h - log_rows;
+  if (chat_h < 1)
+    return FALSE;
 
-  l->borders = TRUE;
-  l->frame_top = 0;
-  l->frame_bottom = frame_h - 1;
-  l->frame_mid = log_h ? (o->log_on_top ? log_h + 1 : chat_h + 1) : -1;
-  if (o->log_on_top) {
-    log_y = 1;
-    chat_y = log_h ? log_h + 2 : 1;
-  } else {
-    chat_y = 1;
-    log_y = chat_h + 2;
-  }
-
-  inner_w = cols - 2;
+  // Columns
+  inner_x = b ? 1 : 0;
+  inner_w = b ? cols - 2 : cols;
+  if (inner_w < 3)
+    return FALSE;
   roster_w = CLAMP(o->roster_width, 0, inner_w - 2);
-  l->frame_left = 0;
-  l->frame_right = cols - 1;
-  if (roster_w) {
-    chat_w = inner_w - roster_w - 1;
-    if (o->roster_on_right) {
-      chat_x = 1;
-      l->frame_vsep = chat_x + chat_w;
-      roster_x = l->frame_vsep + 1;
-    } else {
-      roster_x = 1;
-      l->frame_vsep = roster_x + roster_w;
-      chat_x = l->frame_vsep + 1;
-    }
+  col_w = inner_w - roster_w - (b && roster_w ? 1 : 0);
+  if (o->roster_on_right) {
+    col_x = inner_x;
+    roster_x = col_x + col_w + (b && roster_w ? 1 : 0);
+    if (b && roster_w)
+      l->frame_vsep = col_x + col_w;
   } else {
-    chat_x = 1;
-    chat_w = inner_w;
-    roster_x = 1;
-    l->frame_vsep = -1;
+    roster_x = inner_x;
+    col_x = inner_x + roster_w + (b && roster_w ? 1 : 0);
+    if (b && roster_w)
+      l->frame_vsep = inner_x + roster_w;
+  }
+  members_w = CLAMP(o->members_width, 0, col_w / 2);
+  chat_w = col_w - members_w - (b && members_w ? 1 : 0);
+  if (o->members_on_left) {
+    members_x = col_x;
+    chat_x = col_x + members_w + (b && members_w ? 1 : 0);
+    if (b && members_w)
+      l->frame_msep = col_x + members_w;
+  } else {
+    chat_x = col_x;
+    members_x = col_x + chat_w + (b && members_w ? 1 : 0);
+    if (b && members_w)
+      l->frame_msep = chat_x + chat_w;
+  }
+  if (b) {
+    l->frame_left = 0;
+    l->frame_right = cols - 1;
   }
 
-  set_rect(&l->roster, chat_y, roster_x, chat_h, roster_w);
-  set_rect(&l->chat, chat_y, chat_x, chat_h, chat_w);
-  // The chat status is in the frame line above the chat window
-  set_rect(&l->chatstatus, chat_y - 1, chat_x + 1, 1, MAX(chat_w - 2, 1));
-  set_rect(&l->log, log_y, 1, log_h, inner_w);
-  set_rect(&l->mainstatus, frame_h, 0, 1, cols);
-  set_rect(&l->input, frame_h + 1, 0, input_h, cols);
+  // Rows, from the top
+  y = 0;
+  if (b)
+    l->frame_top = y++;
+  if (o->log_on_top && log_h) {
+    set_rect(&l->log, y, inner_x, log_h, inner_w);
+    y += log_h;
+    if (b)
+      l->frame_mid = y++;
+  }
+  // Chat area
+  {
+    int area_y = y;
+    int area_h;
+
+    if (!b && !in_chat && o->log_on_top) {
+      // The chat status line is above the chat window, full width
+      set_rect(&l->chatstatus, y++, 0, 1, cols);
+      area_y = y;
+    }
+    set_rect(&l->chat, y, chat_x, chat_h, chat_w);
+    set_rect(&l->members, y, members_x, chat_h, members_w);
+    if (b)
+      set_rect(&l->chatstatus, y - 1, chat_x + 1, 1, MAX(chat_w - 2, 1));
+    y += chat_h;
+    if (!b && (in_chat || !o->log_on_top)) {
+      if (in_chat)
+        set_rect(&l->chatstatus, y++, col_x, 1, col_w);
+      else
+        set_rect(&l->chatstatus, y++, 0, 1, cols);
+    }
+    if (in_chat) {
+      if (b)
+        l->frame_isep = y++;
+      set_rect(&l->input, y, col_x, input_h, col_w);
+      y += input_h;
+    }
+    area_h = y - area_y;
+    if (!b && !in_chat && !o->log_on_top)
+      area_h--;     // The chat status line is below the roster
+    set_rect(&l->roster, area_y, roster_x, area_h, roster_w);
+  }
+  if (!o->log_on_top && log_h) {
+    if (b)
+      l->frame_mid = y++;
+    set_rect(&l->log, y, inner_x, log_h, inner_w);
+    y += log_h;
+  }
+  if (!log_h)
+    set_rect(&l->log, y, inner_x, 0, inner_w);
+  if (b)
+    l->frame_bottom = y++;
+  set_rect(&l->mainstatus, y++, 0, 1, cols);
+  if (!in_chat)
+    set_rect(&l->input, y, 0, input_h, cols);
   return TRUE;
 }
 
 void layout_compute(const layout_opts_t *o, ui_layout_t *l)
 {
-  int lines = MAX(o->lines, 4);
-  int cols = MAX(o->cols, 1);
-  int input_h, log_h, chat_h, roster_w, chat_y, chatstatus_y, log_y;
-
-  l->borders = FALSE;
-  l->frame_top = l->frame_mid = l->frame_bottom = -1;
-  l->frame_left = l->frame_vsep = l->frame_right = -1;
-  if (o->borders && layout_borders(o, l))
+  if (o->borders && compute(o, l, TRUE))
     return;
-
-  // Fixed lines: the two status lines and at least one chat line
-  input_h = CLAMP(o->input_height, 1, lines - 3);
-  log_h = CLAMP(o->log_height, 0, lines - 3 - input_h);
-  chat_h = lines - 2 - input_h - log_h;
-
-  roster_w = CLAMP(o->roster_width, 0, cols - 1);
-
-  if (o->log_on_top) {
-    log_y = 0;
-    chatstatus_y = log_h;
-    chat_y = log_h + 1;
-  } else {
-    chat_y = 0;
-    chatstatus_y = chat_h;
-    log_y = chat_h + 1;
+  if (compute(o, l, FALSE))
+    return;
+  // Tiny terminal: use the minimal layout
+  {
+    layout_opts_t small = *o;
+    small.log_height = 0;
+    small.input_height = 1;
+    small.members_width = 0;
+    small.lines = MAX(o->lines, 4);
+    if (!compute(&small, l, FALSE)) {
+      small.input_in_chat = FALSE;
+      compute(&small, l, FALSE);
+    }
   }
-
-  if (o->roster_on_right) {
-    set_rect(&l->roster, chat_y, cols - roster_w, chat_h, roster_w);
-    set_rect(&l->chat, chat_y, 0, chat_h, cols - roster_w);
-  } else {
-    set_rect(&l->roster, chat_y, 0, chat_h, roster_w);
-    set_rect(&l->chat, chat_y, roster_w, chat_h, cols - roster_w);
-  }
-  set_rect(&l->chatstatus, chatstatus_y, 0, 1, cols);
-  set_rect(&l->log, log_y, 0, log_h, cols);
-  set_rect(&l->mainstatus, lines - input_h - 1, 0, 1, cols);
-  set_rect(&l->input, lines - input_h, 0, input_h, cols);
 }
 
 /* vim: set et cindent cinoptions=>2\:2(0 ts=2 sw=2:  For Vim users... */

@@ -58,7 +58,7 @@ static void test_small(void)
   g_assert_cmpint(l.chat.h, ==, 1);
   g_assert_cmpint(l.input.h, ==, 3);
   g_assert_cmpint(l.log.h, ==, 0);
-  g_assert_cmpint(l.roster.w, ==, 9);
+  g_assert_cmpint(l.roster.w, ==, 8);
   g_assert_cmpint(l.input.y + l.input.h, ==, 6);
 
   o.lines = 2;    // Less than the minimum
@@ -111,6 +111,46 @@ static void test_borders(void)
   g_assert_false(l.borders);
 }
 
+static void test_input_in_chat(void)
+{
+  layout_opts_t o = { 30, 100, 5, 24, FALSE, FALSE, 2, FALSE, TRUE, 0, FALSE };
+  ui_layout_t l;
+
+  layout_compute(&o, &l);
+  // chat, chat status, input in the chat column; then log, main status
+  ASSERT_RECT(l.chat,        0, 24, 21, 76);
+  ASSERT_RECT(l.chatstatus, 21, 24,  1, 76);
+  ASSERT_RECT(l.input,      22, 24,  2, 76);
+  ASSERT_RECT(l.roster,      0,  0, 24, 24);
+  ASSERT_RECT(l.log,        24,  0,  5, 100);
+  ASSERT_RECT(l.mainstatus, 29,  0,  1, 100);
+
+  // With frames and a members column
+  o.borders = TRUE;
+  o.members_width = 20;
+  layout_compute(&o, &l);
+  g_assert_true(l.borders);
+  ASSERT_RECT(l.roster,      1,  1, 21, 24);
+  g_assert_cmpint(l.frame_vsep, ==, 25);
+  ASSERT_RECT(l.chat,        1, 26, 18, 52);
+  g_assert_cmpint(l.frame_msep, ==, 78);
+  ASSERT_RECT(l.members,     1, 79, 18, 20);
+  ASSERT_RECT(l.chatstatus,  0, 27,  1, 50);
+  g_assert_cmpint(l.frame_isep, ==, 19);
+  ASSERT_RECT(l.input,      20, 26,  2, 73);
+  g_assert_cmpint(l.frame_mid, ==, 22);
+  ASSERT_RECT(l.log,        23,  1,  5, 98);
+  g_assert_cmpint(l.frame_bottom, ==, 28);
+  ASSERT_RECT(l.mainstatus, 29,  0,  1, 100);
+
+  // Members on the left, without frames
+  o.borders = FALSE;
+  o.members_on_left = TRUE;
+  layout_compute(&o, &l);
+  ASSERT_RECT(l.members,     0, 24, 21, 20);
+  ASSERT_RECT(l.chat,        0, 44, 21, 56);
+}
+
 int main(int argc, char **argv)
 {
   g_test_init(&argc, &argv, NULL);
@@ -119,5 +159,6 @@ int main(int argc, char **argv)
   g_test_add_func("/layout/hidden", test_hidden);
   g_test_add_func("/layout/small", test_small);
   g_test_add_func("/layout/borders", test_borders);
+  g_test_add_func("/layout/input_in_chat", test_input_in_chat);
   return g_test_run();
 }
