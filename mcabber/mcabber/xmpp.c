@@ -428,7 +428,10 @@ void xmpp_send_msg(const char *fjid, const char *text, int type,
   if (text) {
     lm_message_node_add_child(x->node, "body",
                               enc ? "This message is PGP-encrypted." :
-                              use_omemo ? OMEMO_FALLBACK_BODY : text);
+#ifdef HAVE_OMEMO
+                              use_omemo ? OMEMO_FALLBACK_BODY :
+#endif
+                              text);
   }
 
   if (subject)

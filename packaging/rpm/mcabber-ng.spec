@@ -15,6 +15,8 @@ BuildRequires:  gpgme-devel
 BuildRequires:  pkgconfig(libidn)
 BuildRequires:  pkgconfig(enchant-2)
 BuildRequires:  pkgconfig(libomemo-c)
+# libomemo-c.pc links with protobuf-c
+BuildRequires:  pkgconfig(libprotobuf-c)
 BuildRequires:  pkgconfig(libgcrypt)
 
 %description

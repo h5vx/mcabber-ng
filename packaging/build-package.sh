@@ -65,7 +65,8 @@ EOT
 
   arch)
     pacman -Syu --noconfirm --needed base-devel ncurses glib2 loudmouth \
-      luajit gpgme libidn enchant autoconf automake libtool pkgconf
+      luajit gpgme libidn enchant libomemo-c libgcrypt autoconf automake \
+      libtool pkgconf
     id builder >/dev/null 2>&1 || useradd -m builder
     PKGDIR=/home/builder/pkg
     rm -rf "$PKGDIR"
