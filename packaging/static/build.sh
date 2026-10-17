@@ -73,6 +73,8 @@ curl -fsSL -o libotr.tar.gz \
   "https://otr.cypherpunks.ca/libotr-$LIBOTR_VERSION.tar.gz"
 tar xzf libotr.tar.gz
 cd "libotr-$LIBOTR_VERSION"
+# Its config.guess (2012) doesn't know recent architectures (riscv64)
+cp /usr/share/automake-*/config.guess /usr/share/automake-*/config.sub .
 ./configure --prefix="$DEPS" --enable-static --disable-shared
 # Only the library (the tests don't build with recent compilers)
 make -j"$(nproc)" -C src
