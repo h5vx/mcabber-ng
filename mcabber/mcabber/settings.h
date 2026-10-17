@@ -33,7 +33,7 @@ typedef gchar *(*settings_guard_t)(const gchar *key, const gchar *new_value);
 void    settings_init(void);
 void    settings_free(void);
 const gchar *settings_get_mcabber_config_dir(void);
-int     cfg_read_file(char *filename, guint mainfile);
+void    settings_set_mcabber_config_dir(const gchar *dir);
 guint   parse_assigment(gchar *assignment, gchar **pkey, gchar **pval);
 gboolean settings_set_guard(const gchar *key, settings_guard_t guard);
 void    settings_del_guard(const gchar *key);
@@ -62,8 +62,6 @@ void    settings_otr_setpolicy(const char *bjid, guint value);
 guint get_max_history_blocks(void);
 
 char *default_muc_nickname(const char *roomid);
-
-const gchar *isbound(int key);
 
 #endif /* __MCABBER_SETTINGS_H__ */
 

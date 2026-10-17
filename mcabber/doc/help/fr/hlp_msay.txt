@@ -3,7 +3,7 @@
 
 Cette commande permet d'envoyer des messages multi-lignes. Pour écrire un message contenant plusieurs lignes, il faut activer le mode 'multi-lignes'.
 Dans ce mode, chaque ligne (à l'exception des lignes de commandes) entrée dans la barre de saisie sera ajoutée au message multi-lignes. Lorsque le message est prêt, il peut être envoyé au contact sélectionné à l'aide de la commande "/msay send".
-Astuce : la sous-commande 'toggle' peut être affectée à une touche pour utiliser le mode multi-lignes rapidement (par exemple, "bind M13 = msay toggle" pour basculer à l'aide de la combinaison Meta-Entrée).
+Astuce : la sous-commande 'toggle' peut être affectée à une touche pour utiliser le mode multi-lignes rapidement (par exemple, "bind Alt+m = msay toggle" pour basculer à l'aide de la combinaison Meta-Entrée).
 
 /msay begin [sujet]
  Active le mode multi-lignes. Il est possible de spécifier un sujet.

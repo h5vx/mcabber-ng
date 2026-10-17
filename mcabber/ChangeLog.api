@@ -1,3 +1,15 @@
+dev (42) -- mcabber-ng
+
+ * keycode_t: the MKEY_* constants have changed, escape sequences are
+   decoded into a keyspec_t (keys.h); scr_keycode_name()
+ * hbuf_add_line() has a nick parameter and no mucnicklen parameter;
+   hbb_line has nick, headw and contw instead of mucnicklen
+ * scr_line_prefix() replaced by msgfmt_head() (msgformat.h)
+ * New scr_write_incoming_message_nick(), scr_write_outgoing_message_nick()
+ * New HBB_PREFIX_ME, HBB_PREFIX_MUC, HBB_PREFIX_PRIVATE flags
+ * cfg_read_file() removed (the configuration is a Lua script)
+ * cmd_add() and cmd_set_safe() are always available
+
 dev (41)
 
  * Stable api 1.1.2:1

@@ -175,6 +175,8 @@ void hlog_read_history(const char *bjid, GList **p_buddyhbuf, guint width)
   guint ln = 0; // line number
   time_t starttime;
   int max_num_of_blocks;
+  gboolean is_room = (roster_gettype(bjid) & ROSTER_TYPE_ROOM) != 0;
+  gchar *peer_id, *my_id;
 
   if (!FileLoadLogs)
     return;
@@ -190,12 +192,23 @@ void hlog_read_history(const char *bjid, GList **p_buddyhbuf, guint width)
     return;
   }
 
+  // Nicknames for one-to-one messages
+  peer_id = g_strdup(bjid);
+  if (settings_opt_get_int("buddy_me_fulljid") == FALSE) {
+    gchar *p = strchr(peer_id, '@');
+    if (p)
+      *p = '\0';
+  }
+  my_id = jid_get_username(settings_opt_get("jid"));
+
   filename = user_histo_file(bjid);
 
   fp = fopen(filename, "r");
   g_free(filename);
   if (!fp) {
     g_free(data);
+    g_free(peer_id);
+    g_free(my_id);
     return;
   }
 
@@ -347,9 +360,27 @@ void hlog_read_history(const char *bjid, GList **p_buddyhbuf, guint width)
       }
       converted = from_utf8(&data[dataoffset+1]);
       if (converted) {
+        char *body, *nick = NULL;
         xtext = ut_expand_tabs(converted); // Expand tabs
-        hbuf_add_line(p_buddyhbuf, xtext, timestamp, prefix_flags, width,
-                      max_num_of_blocks, 0, NULL);
+        body = xtext;
+        if (info != 'I') {
+          // Room messages are logged as "<nick> text"
+          char *end;
+          if (is_room && body[0] == '<' && (end = strstr(body, "> "))) {
+            nick = g_strndup(body + 1, end - body - 1);
+            body = end + 2;
+            prefix_flags |= HBB_PREFIX_MUC;
+          } else if (!is_room) {
+            nick = g_strdup(info == 'S' ? my_id : peer_id);
+          }
+          if (nick && !strncmp(body, "/me ", 4)) {
+            prefix_flags |= HBB_PREFIX_ME;
+            body += 4;
+          }
+        }
+        hbuf_add_line(p_buddyhbuf, body, nick, timestamp, prefix_flags,
+                      width, max_num_of_blocks, NULL);
+        g_free(nick);
         if (xtext != converted)
           g_free(xtext);
         g_free(converted);
@@ -359,6 +390,8 @@ void hlog_read_history(const char *bjid, GList **p_buddyhbuf, guint width)
   }
   fclose(fp);
   g_free(data);
+  g_free(peer_id);
+  g_free(my_id);
 }
 
 //  hlog_enable()

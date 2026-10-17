@@ -1,0 +1,27 @@
+Source: mcabber-ng
+Section: net
+Priority: optional
+Maintainer: h5vx <h5vx@users.noreply.github.com>
+Build-Depends: debhelper-compat (= 13),
+               autoconf, automake, libtool, pkgconf | pkg-config,
+               libncurses-dev,
+               libglib2.0-dev,
+               libloudmouth1-dev,
+               libluajit-5.1-dev | libluajit2-5.1-dev | liblua5.1-0-dev,
+               libgpgme-dev,
+               libidn-dev,
+               libenchant-2-dev
+Standards-Version: 4.6.2
+Homepage: https://github.com/h5vx/mcabber-ng
+Rules-Requires-Root: no
+
+Package: mcabber-ng
+Architecture: any
+Depends: ${shlibs:Depends}, ${misc:Depends}
+Description: Jabber (XMPP) console client configured in Lua
+ mcabber-ng is a fork of mcabber, a small Jabber (XMPP) client for the
+ console.  Its configuration is a Lua script: options, key bindings with
+ readable names, event handlers, message and interface formats, themes.
+ .
+ It supports multi-line messages, does not send pasted text line by line,
+ and has a configurable interface with frames and 256/24-bit colors.

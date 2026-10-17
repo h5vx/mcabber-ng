@@ -32,17 +32,29 @@
 #define HBB_PREFIX_READMARK   (1U<<15)
 #define HBB_PREFIX_DELAYED    (1U<<16)
 #define HBB_PREFIX_CARBON     (1U<<17)
+#define HBB_PREFIX_ME         (1U<<18)  // "/me" action
+#define HBB_PREFIX_MUC        (1U<<19)  // Room message (with a nickname)
+#define HBB_PREFIX_PRIVATE    (1U<<20)  // Private message in a room
 
 typedef struct {
   time_t timestamp;
   guint flags;
-  unsigned mucnicklen;
+  const char *nick;     // Sender (or recipient) nickname, first line only
+  guint headw;          // Width of the head (first line of a message)
+  guint contw;          // Indentation of the other lines
   char *text;
 } hbb_line;
 
-void hbuf_add_line(GList **p_hbuf, const char *text, time_t timestamp,
-        guint prefix_flags, guint width, guint maxhbufblocks,
-        unsigned mucnicklen, gpointer xep184);
+//  The head is the text displayed before a message (time, nickname...).
+// The function giving its width (and the indentation of the following lines)
+// is provided by the user interface.
+typedef void (*hbuf_head_fn)(time_t timestamp, guint flags, const char *nick,
+                             guint *headw, guint *contw);
+void hbuf_set_head_func(hbuf_head_fn fn);
+
+void hbuf_add_line(GList **p_hbuf, const char *text, const char *nick,
+        time_t timestamp, guint prefix_flags, guint width,
+        guint maxhbufblocks, gpointer xep184);
 void hbuf_free(GList **p_hbuf);
 void hbuf_rebuild(GList **p_hbuf, unsigned int width);
 GList *hbuf_previous_persistent(GList *l_line);

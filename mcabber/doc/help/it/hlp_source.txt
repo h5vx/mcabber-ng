@@ -1,4 +1,4 @@
 
- /SOURCE pattern
+ /SOURCE modello
 
-Legge uno o più file di configurazione che corrispondano al pattern specificato (ordinati alfabeticamente).
+Esegue i file Lua che corrispondono al modello (in ordine alfabetico).

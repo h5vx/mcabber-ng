@@ -23,6 +23,7 @@
 #include <string.h>
 #include <time.h>
 #include <ctype.h>
+#include <unistd.h>
 
 #include <config.h>
 #include <locale.h>
@@ -55,6 +56,13 @@
 #include "roster.h"
 #include "histolog.h"
 #include "settings.h"
+#include "mlua.h"
+#include "layout.h"
+#include "inputlayout.h"
+#include "paste.h"
+#include "msgformat.h"
+#include "style.h"
+#include "xmlsplit.h"
 #include "utils.h"
 #include "xmpp.h"
 #include "main.h"
@@ -62,17 +70,18 @@
 int COLOR_ATTRIB[COLOR_max];
 
 #define get_color(col)      (COLOR_PAIR(col)|COLOR_ATTRIB[col])
-#define compose_color(col)  (COLOR_PAIR(col->color_pair)|col->color_attrib)
 
 #define DEFAULT_LOG_WIN_HEIGHT (5)
 #define DEFAULT_ROSTER_WIDTH    24
-#define CHAT_WIN_HEIGHT (maxY-2-1-Log_Win_Height)
+#define CHAT_WIN_HEIGHT (Layout.chat.h)
 
 #define DEFAULT_ATTENTION_CHAR '!'
 
 const char *LocaleCharSet = "C";
 
 static unsigned short int Log_Win_Height;
+static int Input_Win_Height = 1;
+static ui_layout_t Layout;
 static unsigned short int Roster_Width;
 static gboolean colors_stalled = FALSE;
 
@@ -80,17 +89,17 @@ static gboolean colors_stalled = FALSE;
 static guint ui_attn_sign_prio_level_muc = ROSTER_UI_PRIO_MUC_HL_MESSAGE;
 static guint ui_attn_sign_prio_level     = ROSTER_UI_PRIO_ATTENTION_MESSAGE;
 
-static inline void check_offset(int);
 static void scr_cancel_current_completion(void);
 static void scr_end_current_completion(void);
 static void scr_insert_text(const char*);
+static guint input_text_width(void);
 static void scr_handle_tab(gboolean fwd);
 
 static void scr_glog_print(const gchar *log_domain, GLogLevelFlags log_level,
                            const gchar *message, gpointer user_data);
 
 #ifdef XEP0085
-static gboolean scr_chatstates_timeout();
+static gboolean scr_chatstates_timeout(gpointer data);
 #endif
 
 #if defined(WITH_ENCHANT) || defined(WITH_ASPELL)
@@ -109,13 +118,26 @@ typedef struct {
   char      lock;
   char      refcount; // refcount > 0 if there are other users of this struct
                       // e.g. with symlinked history
+  int       width;    // Width used to wrap the lines of hbuf
 } buffdata_t;
 
 typedef struct {
   WINDOW *win;
   PANEL  *panel;
   buffdata_t *bd;
+  gchar  *jid;        // NULL for the special buffer
 } winbuf_t;
+
+static rect_t chat_rect(gboolean room);
+static void draw_members(void);
+static void place_chatstatus(void);
+
+static void winbuf_free(gpointer data)
+{
+  winbuf_t *w = data;
+  g_free(w->jid);
+  g_free(w);
+}
 
 struct dimensions {
   int l;
@@ -127,6 +149,16 @@ static WINDOW *mainstatusWnd, *chatstatusWnd;
 static PANEL *rosterPanel, *chatPanel, *activechatPanel, *inputPanel;
 static PANEL *mainstatusPanel, *chatstatusPanel;
 static PANEL *logPanel;
+static WINDOW *frameWnd;      // Frames (ui_borders), behind the other windows
+static PANEL *framePanel;
+static WINDOW *membersWnd;    // Members of the current room
+static PANEL *membersPanel;
+static gboolean members_hidden;   // "/members hide"
+static gboolean members_shown;    // The members panel is displayed
+static winbuf_t *consoleWindow;   // XMPP console
+static gboolean console_shown;
+static GList *console_buddy;      // Current buddy when it was displayed
+static void console_show(void);
 static int maxY, maxX;
 static int prev_chatwidth;
 static winbuf_t *statusWindow;
@@ -148,7 +180,8 @@ static char       inputLine[INPUTLINE_LENGTH+1];
 static char       maskLine[INPUTLINE_LENGTH+1];
 #endif
 static char      *ptr_inputline;
-static short int  inputline_offset;
+static guint input_scroll;   // First visible row of the input line
+static il_layout_t InputLayout;
 static int    completion_started;
 static GList *cmdhisto;
 static GList *cmdhisto_cur;
@@ -167,25 +200,25 @@ gboolean Autoaway;
 
 gboolean vi_mode;
 
-#define MAX_KEYSEQ_LENGTH 8
+#define MAX_KEYSEQ_LENGTH 16
 
+// Escape sequences that ncurses doesn't know (without the leading Esc)
 typedef struct {
   char *seqstr;
-  guint mkeycode;
-  gint  value;
+  keyspec_t spec;
 } keyseq_t;
 
 GSList *keyseqlist;
-static void add_keyseq(char *seqstr, guint mkeycode, gint value);
+static void add_keyseq(char *seqstr, guint mods, gint key);
 
 static void scr_write_in_window(const char *winId, const char *text,
-                                time_t timestamp, unsigned int prefix_flags,
-                                int force_show, unsigned mucnicklen,
+                                const char *nick, time_t timestamp,
+                                unsigned int prefix_flags, int force_show,
                                 gpointer xep184);
 
 static void scr_write_message(const char *bjid, const char *text,
-                              time_t timestamp, guint prefix_flags,
-                              unsigned mucnicklen, gpointer xep184);
+                              const char *nick, time_t timestamp,
+                              guint prefix_flags, gpointer xep184);
 
 void scr_update_buddy_window(void);
 void scr_set_chatmode(int enable);
@@ -207,10 +240,17 @@ typedef struct {
 GSList* spell_checkers = NULL;
 #endif
 
+// User colors (roster rules, nick colors): a style, or an internal color
 typedef struct {
-  int color_pair;
+  int color_pair;       // Internal color (COLOR_*), if !has_spec
   int color_attrib;
+  gboolean has_spec;
+  style_spec_t spec;
+  guint gen;            // Color generation of "cached"
+  int cached;
 } ccolor_t;
+
+static int compose_color(ccolor_t *col);
 
 typedef struct {
   char *status, *wildcard;
@@ -233,54 +273,292 @@ static muccol_t glob_muccol = MC_OFF;
 
 /* Functions */
 
-static int find_color(const char *name)
+/* -- Colors and styles -- */
+
+#ifdef HAVE_TIGETFLAG
+// From <term.h>, which can't be included here (it defines "lines"...)
+extern int tigetflag(const char *capname);
+#endif
+
+static gboolean colors_started;  // start_color() has been called
+static int color_depth = 8;     // 8, 16, 256 or 0x1000000 (direct color)
+static GHashTable *pair_cache;  // "fg:bg" -> color pair
+static int next_pair;
+static guint color_gen = 1;     // Incremented when colors are reset
+static GHashTable *theme;       // Style name -> specification (mc.style)
+static GHashTable *style_cache; // Style name -> attributes (int)
+static int general_fg = COLOR_WHITE, general_bg = COLOR_BLACK;
+
+static void detect_color_depth(void)
 {
-  int result;
+  const char *opt = settings_opt_get("ui_colors");
 
-  if (!strcmp(name, "default"))
+  color_depth = COLORS;
+#ifdef HAVE_TIGETFLAG
+  if (COLORS > 256 && tigetflag("RGB") > 0)
+    color_depth = 0x1000000;
+#endif
+  if (COLORS >= 0x1000000)
+    color_depth = 0x1000000;
+  if (opt && *opt && g_ascii_strcasecmp(opt, "auto")) {
+    if (!g_ascii_strcasecmp(opt, "truecolor"))
+      color_depth = 0x1000000;
+    else if (atoi(opt) > 0)
+      color_depth = MIN(atoi(opt), color_depth);
+  }
+  if (color_depth > 256 && color_depth < 0x1000000)
+    color_depth = 256;
+}
+
+//  resolve_color(color, &attrs)
+// Terminal color number for a style color, -1 for the default color and
+// -2 if the color is not set.  Colors that the terminal doesn't have are
+// approximated (A_BOLD is added to attrs for bright colors on 8-color
+// terminals).
+static int resolve_color(const style_color_t *c, int *attrs)
+{
+  guint32 rgb;
+
+  switch (c->kind) {
+    case STYLE_COLOR_UNSET:
+        return -2;
+    case STYLE_COLOR_DEFAULT:
+        return -1;
+    case STYLE_COLOR_INDEX:
+        if (c->value < 8 ||
+            (color_depth <= 256 && c->value < (guint)color_depth))
+          return c->value;
+        if (c->value < 16 && color_depth < 16) {
+          if (attrs)
+            *attrs |= A_BOLD;
+          return c->value - 8;
+        }
+        rgb = style_palette_rgb(c->value);
+        break;
+    default:
+        rgb = c->value;
+  }
+  if (color_depth >= 0x1000000)
+    return rgb < 8 ? 0 : (int)rgb;  // Values < 8 are palette colors
+  if (color_depth >= 256)
+    return style_rgb_to_256(rgb);
+  {
+    int n = style_rgb_to_16(rgb);
+    if (n >= 8 && color_depth < 16) {
+      if (attrs)
+        *attrs |= A_BOLD;
+      n -= 8;
+    }
+    return n;
+  }
+}
+
+static void reset_pairs(void)
+{
+  if (pair_cache)
+    g_hash_table_remove_all(pair_cache);
+  else
+    pair_cache = g_hash_table_new_full(g_str_hash, g_str_equal, g_free, NULL);
+  if (style_cache)
+    g_hash_table_remove_all(style_cache);
+  else
+    style_cache = g_hash_table_new_full(g_str_hash, g_str_equal, g_free, NULL);
+  next_pair = COLOR_max;
+  color_gen++;
+}
+
+static void set_pair(int pair, int fg, int bg)
+{
+#ifdef HAVE_INIT_EXTENDED_PAIR
+  init_extended_pair(pair, fg, bg);
+#else
+  init_pair(pair, fg, bg);
+#endif
+}
+
+//  ui_pair(fg, bg)
+// Get a color pair (allocated when needed).
+static int ui_pair(int fg, int bg)
+{
+  static gboolean warned;
+  int max_pair = MIN(COLOR_PAIRS - 1, 255);
+  gchar *key;
+  gpointer p;
+
+  if (!colors_started)
+    return 0;
+  if (!pair_cache)
+    reset_pairs();
+  key = g_strdup_printf("%d:%d", fg, bg);
+  if (g_hash_table_lookup_extended(pair_cache, key, NULL, &p)) {
+    g_free(key);
+    return GPOINTER_TO_INT(p);
+  }
+  if (next_pair > max_pair) {
+    if (!warned)
+      scr_LogPrint(LPRINT_LOGNORM, "Too many colors are used.");
+    warned = TRUE;
+    g_free(key);
+    return 0;
+  }
+  set_pair(next_pair, fg, bg);
+  g_hash_table_insert(pair_cache, key, GINT_TO_POINTER(next_pair));
+  return next_pair++;
+}
+
+static int style_attrs(guint a)
+{
+  int attrs = 0;
+  if (a & STYLE_BOLD)      attrs |= A_BOLD;
+  if (a & STYLE_DIM)       attrs |= A_DIM;
+#ifdef A_ITALIC
+  if (a & STYLE_ITALIC)    attrs |= A_ITALIC;
+#endif
+  if (a & STYLE_UNDERLINE) attrs |= A_UNDERLINE;
+  if (a & STYLE_REVERSE)   attrs |= A_REVERSE;
+  if (a & STYLE_BLINK)     attrs |= A_BLINK;
+  if (a & STYLE_STANDOUT)  attrs |= A_STANDOUT;
+  return attrs;
+}
+
+//  spec_attr(spec, def_fg, def_bg)
+// Attributes (color pair included) for a style specification.
+static int spec_attr(const style_spec_t *spec, int def_fg, int def_bg)
+{
+  int attrs = style_attrs(spec->attrs);
+  int fg = resolve_color(&spec->fg, &attrs);
+  int bg = resolve_color(&spec->bg, NULL);
+  if (fg == -2) fg = def_fg;
+  if (bg == -2) bg = def_bg;
+  return COLOR_PAIR(ui_pair(fg, bg)) | attrs;
+}
+
+//  legacy_color(name, &attrs)
+// Colors of the color_* options: "bright" means bold.
+static int legacy_color(const char *name, int *attrs)
+{
+  style_color_t c;
+
+  if (!strncmp(name, "bright", 6)) {
+    if (attrs)
+      *attrs |= A_BOLD;
+    name += 6;
+  }
+  if (!style_parse_color(name, &c, NULL)) {
+    scr_LogPrint(LPRINT_LOGNORM, "ERROR: Wrong color: %s", name);
     return -1;
-  if (!strcmp(name, "black"))
-    return COLOR_BLACK;
-  if (!strcmp(name, "red"))
-    return COLOR_RED;
-  if (!strcmp(name, "green"))
-    return COLOR_GREEN;
-  if (!strcmp(name, "yellow"))
-    return COLOR_YELLOW;
-  if (!strcmp(name, "blue"))
-    return COLOR_BLUE;
-  if (!strcmp(name, "magenta"))
-    return COLOR_MAGENTA;
-  if (!strcmp(name, "cyan"))
-    return COLOR_CYAN;
-  if (!strcmp(name, "white"))
-    return COLOR_WHITE;
-
-  // Directly support 256-color values
-  result = atoi(name);
-  if (result > 0 && (result < COLORS || !Curses))
-    return result;
-
-  scr_LogPrint(LPRINT_LOGNORM, "ERROR: Wrong color: %s", name);
-  return -1;
+  }
+  return resolve_color(&c, NULL);
 }
 
 static ccolor_t *get_user_color(const char *color)
 {
-  bool isbright = FALSE;
-  int cl;
   ccolor_t *ccol;
-  if (!strncmp(color, "bright", 6)) {
-    isbright = TRUE;
-    color += 6;
-  }
-  cl = find_color(color);
-  if (cl < 0)
+  style_spec_t spec;
+  GError *err = NULL;
+
+  if (!style_parse(color, &spec, &err)) {
+    scr_LogPrint(LPRINT_LOGNORM, "ERROR: Wrong color: %s (%s)", color,
+                 err->message);
+    g_error_free(err);
     return NULL;
+  }
   ccol = g_new0(ccolor_t, 1);
-  ccol->color_attrib = isbright ? A_BOLD : A_NORMAL;
-  ccol->color_pair = cl + COLOR_max; // User colors come after the internal ones
+  ccol->has_spec = TRUE;
+  ccol->spec = spec;
   return ccol;
+}
+
+static int compose_color(ccolor_t *col)
+{
+  if (!col->has_spec)
+    return COLOR_PAIR(col->color_pair) | col->color_attrib;
+  if (col->gen != color_gen) {
+    col->cached = spec_attr(&col->spec, general_fg, general_bg);
+    col->gen = color_gen;
+  }
+  return col->cached;
+}
+
+//  scr_set_style(name, spec)
+// Set a style of the theme (mc.style).  Returns FALSE (and sets err) if
+// the specification is invalid.
+gboolean scr_set_style(const char *name, const char *spec, GError **err)
+{
+  if (!theme)
+    theme = g_hash_table_new_full(g_str_hash, g_str_equal, g_free, g_free);
+  if (!spec) {
+    g_hash_table_remove(theme, name);
+  } else {
+    style_spec_t st;
+    if (!style_parse(spec, &st, err))
+      return FALSE;
+    g_hash_table_insert(theme, g_strdup(name), g_strdup(spec));
+  }
+  colors_stalled = TRUE;
+  return TRUE;
+}
+
+static const char *theme_spec(const char *name)
+{
+  return theme ? g_hash_table_lookup(theme, name) : NULL;
+}
+
+// Default specifications of the styles that are not internal colors
+static const struct {
+  const char *name, *spec;
+} default_styles[] = {
+  { "border",           "dim" },
+  { "title",            "bold" },
+  { "title_active",     "bold" },
+  { "nick_self",        "cyan" },
+  { "badge",            "reverse" },
+  { "roster_group",     "bold" },
+  { "roster_unread",    "red" },
+  { "status_online",    "green" },
+  { "status_free",      "brightgreen" },
+  { "status_away",      "yellow" },
+  { "status_notavail",  "magenta" },
+  { "status_dnd",       "red" },
+  { "status_invisible", "dim" },
+  { "status_offline",   "dim" },
+  { "status_unknown",   "dim" },
+  { "status_room",      "magenta" },
+  { "status_room_out",  "dim" },
+  { "dim",              "dim" },
+  { "accent",           "blue" },
+  { "input",            "" },
+  { "input_prompt",     "bold" },
+  { NULL, NULL }
+};
+
+//  custom_style_attr(name, &attr)
+// Attributes of a style that is not an internal color.
+static gboolean custom_style_attr(const char *name, int *attr)
+{
+  const char *spec = theme_spec(name);
+  gpointer cached;
+  style_spec_t st;
+  int i;
+
+  if (!style_cache)
+    reset_pairs();
+  if (g_hash_table_lookup_extended(style_cache, name, NULL, &cached)) {
+    *attr = GPOINTER_TO_INT(cached);
+    return TRUE;
+  }
+  if (!spec) {
+    for (i = 0; default_styles[i].name; i++)
+      if (!strcmp(default_styles[i].name, name)) {
+        spec = default_styles[i].spec;
+        break;
+      }
+  }
+  if (!spec || !style_parse(spec, &st, NULL))
+    return FALSE;
+  *attr = spec_attr(&st, general_fg, general_bg);
+  g_hash_table_insert(style_cache, g_strdup(name), GINT_TO_POINTER(*attr));
+  return TRUE;
 }
 
 static void ensure_string_htable(GHashTable **table,
@@ -443,116 +721,94 @@ bool scr_roster_color(const char *status, const char *wildcard,
   }
 }
 
+//  parse_colors()
+// Initialize the internal colors from the theme (mc.style) and the color_*
+// options.
 static void parse_colors(void)
 {
-  const char *colors[] = {
-    "", "",
-    "general",
-    "msgout",
-    "msghl",
-    "status",
-    "log",
-    "roster",
-    "rostersel",
-    "rosterselmsg",
-    "rosternewmsg",
-    "info",
-    "msgin",
-    "readmark",
-    "timestamp",
-    NULL
+  static const struct {
+    int color;
+    const char *name;
+    int def_fg;
+    const char *bg_option;
+  } colors[] = {
+    { COLOR_GENERAL,       "general",      COLOR_WHITE,  "background" },
+    { COLOR_MSGOUT,        "msgout",       COLOR_CYAN,   "background" },
+    { COLOR_MSGHL,         "msghl",        COLOR_YELLOW, "background" },
+    { COLOR_STATUS,        "status",       COLOR_WHITE,  "bgstatus" },
+    { COLOR_LOG,           "log",          COLOR_WHITE,  "background" },
+    { COLOR_ROSTER,        "roster",       COLOR_GREEN,  "background" },
+    { COLOR_ROSTERSEL,     "rostersel",    COLOR_BLUE,   "bgrostersel" },
+    { COLOR_ROSTERSELNMSG, "rosterselmsg", COLOR_RED,    "bgrostersel" },
+    { COLOR_ROSTERNMSG,    "rosternewmsg", COLOR_RED,    "background" },
+    { COLOR_INFO,          "info",         COLOR_WHITE,  "background" },
+    { COLOR_MSGIN,         "msgin",        COLOR_WHITE,  "background" },
+    { COLOR_READMARK,      "readmark",     COLOR_RED,    "background" },
+    { COLOR_TIMESTAMP,     "timestamp",    COLOR_WHITE,  "background" },
   };
+  static const char *bg_defaults[][2] = {
+    { "background",  "black" },
+    { "bgstatus",    "blue" },
+    { "bgrostersel", "cyan" },
+  };
+  int bgs[3];
+  guint i;
 
-  const char *color;
-  const char *background   = settings_opt_get("color_background");
-  const char *backselected = settings_opt_get("color_bgrostersel");
-  const char *backstatus   = settings_opt_get("color_bgstatus");
-  char *tmp;
-  int i;
+  if (!colors_started)
+    return;
 
-  // Initialize color attributes
+  detect_color_depth();
+  reset_pairs();
   memset(COLOR_ATTRIB, 0, sizeof(COLOR_ATTRIB));
 
-  // Default values
-  if (!background)   background   = "black";
-  if (!backselected) backselected = "cyan";
-  if (!backstatus)   backstatus   = "blue";
+  // Background colors: theme ("background", "bgstatus", "bgrostersel"),
+  // or color_* options
+  for (i = 0; i < 3; i++) {
+    const char *spec = theme_spec(bg_defaults[i][0]);
+    gchar *opt = g_strdup_printf("color_%s", bg_defaults[i][0]);
+    const char *v = settings_opt_get(opt);
+    style_color_t c;
+    g_free(opt);
+    if (spec && style_parse_color(spec, &c, NULL))
+      bgs[i] = resolve_color(&c, NULL);
+    else
+      bgs[i] = legacy_color(v ? v : bg_defaults[i][1], NULL);
+  }
 
-  for (i=0; colors[i]; i++) {
-    tmp = g_strdup_printf("color_%s", colors[i]);
-    color = settings_opt_get(tmp);
-    g_free(tmp);
+  init_pair(1, COLOR_BLACK, COLOR_WHITE);
+  init_pair(2, COLOR_WHITE, COLOR_BLACK);
 
-    if (color) {
-      if (!strncmp(color, "bright", 6)) {
-        COLOR_ATTRIB[i+1] = A_BOLD;
-        color += 6;
-      }
+  for (i = 0; i < G_N_ELEMENTS(colors); i++) {
+    const char *spec = theme_spec(colors[i].name);
+    int bg = bgs[0], fg = colors[i].def_fg, attrs = 0;
+    style_spec_t st;
+
+    if (!strcmp(colors[i].bg_option, "bgstatus"))
+      bg = bgs[1];
+    else if (!strcmp(colors[i].bg_option, "bgrostersel"))
+      bg = bgs[2];
+
+    if (spec && style_parse(spec, &st, NULL)) {
+      int c;
+      attrs = style_attrs(st.attrs);
+      c = resolve_color(&st.fg, &attrs);
+      if (c != -2) fg = c;
+      c = resolve_color(&st.bg, NULL);
+      if (c != -2) bg = c;
+    } else {
+      gchar *opt = g_strdup_printf("color_%s", colors[i].name);
+      const char *v = settings_opt_get(opt);
+      g_free(opt);
+      if (v)
+        fg = legacy_color(v, &attrs);
     }
-
-    switch (i + 1) {
-      case 1:
-          init_pair(1, COLOR_BLACK, COLOR_WHITE);
-          break;
-      case 2:
-          init_pair(2, COLOR_WHITE, COLOR_BLACK);
-          break;
-      case COLOR_GENERAL:
-          init_pair(i+1, ((color) ? find_color(color) : COLOR_WHITE),
-                    find_color(background));
-          break;
-      case COLOR_MSGOUT:
-          init_pair(i+1, ((color) ? find_color(color) : COLOR_CYAN),
-                    find_color(background));
-          break;
-      case COLOR_MSGHL:
-          init_pair(i+1, ((color) ? find_color(color) : COLOR_YELLOW),
-                    find_color(background));
-          break;
-      case COLOR_STATUS:
-          init_pair(i+1, ((color) ? find_color(color) : COLOR_WHITE),
-                    find_color(backstatus));
-          break;
-      case COLOR_LOG:
-          init_pair(i+1, ((color) ? find_color(color) : COLOR_WHITE),
-                    find_color(background));
-          break;
-      case COLOR_ROSTER:
-          init_pair(i+1, ((color) ? find_color(color) : COLOR_GREEN),
-                    find_color(background));
-          break;
-      case COLOR_ROSTERSEL:
-          init_pair(i+1, ((color) ? find_color(color) : COLOR_BLUE),
-                    find_color(backselected));
-          break;
-      case COLOR_ROSTERSELNMSG:
-          init_pair(i+1, ((color) ? find_color(color) : COLOR_RED),
-                    find_color(backselected));
-          break;
-      case COLOR_ROSTERNMSG:
-          init_pair(i+1, ((color) ? find_color(color) : COLOR_RED),
-                    find_color(background));
-          break;
-      case COLOR_INFO:
-          init_pair(i+1, ((color) ? find_color(color) : COLOR_WHITE),
-                    find_color(background));
-          break;
-      case COLOR_MSGIN:
-          init_pair(i+1, ((color) ? find_color(color) : COLOR_WHITE),
-                    find_color(background));
-          break;
-      case COLOR_READMARK:
-          init_pair(i+1, ((color) ? find_color(color) : COLOR_RED),
-                    find_color(background));
-          break;
-      case COLOR_TIMESTAMP:
-          init_pair(i+1, ((color) ? find_color(color) : COLOR_WHITE),
-                    find_color(background));
-          break;
+    set_pair(colors[i].color, fg, bg);
+    COLOR_ATTRIB[colors[i].color] = attrs;
+    if (colors[i].color == COLOR_GENERAL) {
+      general_fg = fg;
+      general_bg = bg;
     }
   }
-  for (i = COLOR_max; i < (COLOR_max + COLORS); i++)
-    init_pair(i, i-COLOR_max, find_color(background));
 
   if (!nickcols) {
     char *ncolors = g_strdup(settings_opt_get("nick_colors"));
@@ -586,8 +842,8 @@ static void parse_colors(void)
     }
     if (!nickcols) { // Fallback to have something
       nickcolcount = 1;
-      nickcols = g_new(ccolor_t*, 1);
-      *nickcols = g_new(ccolor_t, 1);
+      nickcols = g_new0(ccolor_t*, 1);
+      *nickcols = g_new0(ccolor_t, 1);
       (*nickcols)->color_pair = COLOR_GENERAL;
       (*nickcols)->color_attrib = A_NORMAL;
     }
@@ -598,141 +854,143 @@ static void parse_colors(void)
 
 static void init_keycodes(void)
 {
-  add_keyseq("O5A", MKEY_EQUIV, 521); // Ctrl-Up
-  add_keyseq("O5B", MKEY_EQUIV, 514); // Ctrl-Down
-  add_keyseq("O5C", MKEY_EQUIV, 518); // Ctrl-Right
-  add_keyseq("O5D", MKEY_EQUIV, 516); // Ctrl-Left
-  add_keyseq("O6A", MKEY_EQUIV, 520); // Shift-Up
-  add_keyseq("O6B", MKEY_EQUIV, 513); // Shift-Down
-  add_keyseq("O6C", MKEY_EQUIV, 402); // Shift-Right
-  add_keyseq("O6D", MKEY_EQUIV, 393); // Shift-Left
-  add_keyseq("O2A", MKEY_EQUIV, 520); // Shift-Up
-  add_keyseq("O2B", MKEY_EQUIV, 513); // Shift-Down
-  add_keyseq("O2C", MKEY_EQUIV, 402); // Shift-Right
-  add_keyseq("O2D", MKEY_EQUIV, 393); // Shift-Left
-  add_keyseq("[5^", MKEY_CTRL_PGUP, 0);   // Ctrl-PageUp
-  add_keyseq("[6^", MKEY_CTRL_PGDOWN, 0); // Ctrl-PageDown
-  add_keyseq("[5@", MKEY_CTRL_SHIFT_PGUP, 0);   // Ctrl-Shift-PageUp
-  add_keyseq("[6@", MKEY_CTRL_SHIFT_PGDOWN, 0); // Ctrl-Shift-PageDown
-  add_keyseq("[7@", MKEY_CTRL_SHIFT_HOME, 0); // Ctrl-Shift-Home
-  add_keyseq("[8@", MKEY_CTRL_SHIFT_END, 0);  // Ctrl-Shift-End
-  add_keyseq("[8^", MKEY_CTRL_END, 0);  // Ctrl-End
-  add_keyseq("[7^", MKEY_CTRL_HOME, 0); // Ctrl-Home
-  add_keyseq("[2^", MKEY_CTRL_INS, 0);  // Ctrl-Insert
-  add_keyseq("[3^", MKEY_CTRL_DEL, 0);  // Ctrl-Delete
+  // Most sequences are decoded by ncurses (terminfo) or by the generic
+  // CSI decoder in scr_getch().  These are the remaining ones.
 
-  // Xterm
-  add_keyseq("[1;5A", MKEY_EQUIV, 521); // Ctrl-Up
-  add_keyseq("[1;5B", MKEY_EQUIV, 514); // Ctrl-Down
-  add_keyseq("[1;5C", MKEY_EQUIV, 518); // Ctrl-Right
-  add_keyseq("[1;5D", MKEY_EQUIV, 516); // Ctrl-Left
-  add_keyseq("[1;6A", MKEY_EQUIV, 520); // Ctrl-Shift-Up
-  add_keyseq("[1;6B", MKEY_EQUIV, 513); // Ctrl-Shift-Down
-  add_keyseq("[1;6C", MKEY_EQUIV, 402); // Ctrl-Shift-Right
-  add_keyseq("[1;6D", MKEY_EQUIV, 393); // Ctrl-Shift-Left
-  add_keyseq("[1;6H", MKEY_CTRL_SHIFT_HOME, 0); // Ctrl-Shift-Home
-  add_keyseq("[1;6F", MKEY_CTRL_SHIFT_END, 0);  // Ctrl-Shift-End
-  add_keyseq("[1;2A", MKEY_EQUIV, 521); // Shift-Up
-  add_keyseq("[1;2B", MKEY_EQUIV, 514); // Shift-Down
-  add_keyseq("[5;5~", MKEY_CTRL_PGUP, 0);   // Ctrl-PageUp
-  add_keyseq("[6;5~", MKEY_CTRL_PGDOWN, 0); // Ctrl-PageDown
-  add_keyseq("[1;5F", MKEY_CTRL_END, 0);  // Ctrl-End
-  add_keyseq("[1;5H", MKEY_CTRL_HOME, 0); // Ctrl-Home
-  add_keyseq("[2;5~", MKEY_CTRL_INS, 0);  // Ctrl-Insert
-  add_keyseq("[3;5~", MKEY_CTRL_DEL, 0);  // Ctrl-Delete
+  // rxvt
+  add_keyseq("O5A", KMOD_CTRL, KN_UP);
+  add_keyseq("O5B", KMOD_CTRL, KN_DOWN);
+  add_keyseq("O5C", KMOD_CTRL, KN_RIGHT);
+  add_keyseq("O5D", KMOD_CTRL, KN_LEFT);
+  add_keyseq("O6A", KMOD_CTRL|KMOD_SHIFT, KN_UP);
+  add_keyseq("O6B", KMOD_CTRL|KMOD_SHIFT, KN_DOWN);
+  add_keyseq("O6C", KMOD_CTRL|KMOD_SHIFT, KN_RIGHT);
+  add_keyseq("O6D", KMOD_CTRL|KMOD_SHIFT, KN_LEFT);
+  add_keyseq("O2A", KMOD_SHIFT, KN_UP);
+  add_keyseq("O2B", KMOD_SHIFT, KN_DOWN);
+  add_keyseq("O2C", KMOD_SHIFT, KN_RIGHT);
+  add_keyseq("O2D", KMOD_SHIFT, KN_LEFT);
+  add_keyseq("[5^", KMOD_CTRL, KN_PGUP);
+  add_keyseq("[6^", KMOD_CTRL, KN_PGDN);
+  add_keyseq("[5@", KMOD_CTRL|KMOD_SHIFT, KN_PGUP);
+  add_keyseq("[6@", KMOD_CTRL|KMOD_SHIFT, KN_PGDN);
+  add_keyseq("[7@", KMOD_CTRL|KMOD_SHIFT, KN_HOME);
+  add_keyseq("[8@", KMOD_CTRL|KMOD_SHIFT, KN_END);
+  add_keyseq("[7^", KMOD_CTRL, KN_HOME);
+  add_keyseq("[8^", KMOD_CTRL, KN_END);
+  add_keyseq("[2^", KMOD_CTRL, KN_INS);
+  add_keyseq("[3^", KMOD_CTRL, KN_DEL);
+  add_keyseq("[5$", KMOD_SHIFT, KN_PGUP);
+  add_keyseq("[6$", KMOD_SHIFT, KN_PGDN);
+  add_keyseq("[7$", KMOD_SHIFT, KN_HOME);
+  add_keyseq("[8$", KMOD_SHIFT, KN_END);
+  add_keyseq("[2$", KMOD_SHIFT, KN_INS);
+  add_keyseq("[3$", KMOD_SHIFT, KN_DEL);
 
-  // PuTTY
-  add_keyseq("[A", MKEY_EQUIV, 521); // Ctrl-Up
-  add_keyseq("[B", MKEY_EQUIV, 514); // Ctrl-Down
-  add_keyseq("[C", MKEY_EQUIV, 518); // Ctrl-Right
-  add_keyseq("[D", MKEY_EQUIV, 516); // Ctrl-Left
+  // PuTTY (in application cursor mode)
+  add_keyseq("[A", KMOD_CTRL, KN_UP);
+  add_keyseq("[B", KMOD_CTRL, KN_DOWN);
+  add_keyseq("[C", KMOD_CTRL, KN_RIGHT);
+  add_keyseq("[D", KMOD_CTRL, KN_LEFT);
 
   // screen
-  add_keyseq("Oa", MKEY_EQUIV, 521); // Ctrl-Up
-  add_keyseq("Ob", MKEY_EQUIV, 514); // Ctrl-Down
-  add_keyseq("Oc", MKEY_EQUIV, 518); // Ctrl-Right
-  add_keyseq("Od", MKEY_EQUIV, 516); // Ctrl-Left
-  add_keyseq("[a", MKEY_EQUIV, 520); // Shift-Up
-  add_keyseq("[b", MKEY_EQUIV, 513); // Shift-Down
-  add_keyseq("[c", MKEY_EQUIV, 402); // Shift-Right
-  add_keyseq("[d", MKEY_EQUIV, 393); // Shift-Left
-  add_keyseq("[5$", MKEY_SHIFT_PGUP, 0);   // Shift-PageUp
-  add_keyseq("[6$", MKEY_SHIFT_PGDOWN, 0); // Shift-PageDown
+  add_keyseq("Oa", KMOD_CTRL, KN_UP);
+  add_keyseq("Ob", KMOD_CTRL, KN_DOWN);
+  add_keyseq("Oc", KMOD_CTRL, KN_RIGHT);
+  add_keyseq("Od", KMOD_CTRL, KN_LEFT);
+  add_keyseq("[a", KMOD_SHIFT, KN_UP);
+  add_keyseq("[b", KMOD_SHIFT, KN_DOWN);
+  add_keyseq("[c", KMOD_SHIFT, KN_RIGHT);
+  add_keyseq("[d", KMOD_SHIFT, KN_LEFT);
 
-  // VT100
-  add_keyseq("[H", MKEY_EQUIV, KEY_HOME); // Home
-  add_keyseq("[F", MKEY_EQUIV, KEY_END);  // End
+  // SS3 sequences, when ncurses doesn't know them
+  add_keyseq("OA", 0, KN_UP);
+  add_keyseq("OB", 0, KN_DOWN);
+  add_keyseq("OC", 0, KN_RIGHT);
+  add_keyseq("OD", 0, KN_LEFT);
+  add_keyseq("OH", 0, KN_HOME);
+  add_keyseq("OF", 0, KN_END);
+  add_keyseq("OP", 0, KN_F(1));
+  add_keyseq("OQ", 0, KN_F(2));
+  add_keyseq("OR", 0, KN_F(3));
+  add_keyseq("OS", 0, KN_F(4));
+  add_keyseq("OM", 0, KN_ENTER);
+}
 
-  // Konsole Linux
-  add_keyseq("[1~", MKEY_EQUIV, KEY_HOME); // Home
-  add_keyseq("[4~", MKEY_EQUIV, KEY_END);  // End
+//  scr_bind_key(name, command)
+// Bind a command line to a key (given by its name, like "Alt+j").
+// command == NULL removes the binding.  Returns FALSE if the key name
+// cannot be parsed.
+gboolean scr_bind_key(const char *name, const char *command, GError **err)
+{
+  gchar *canon = key_canonicalize(name, NULL);
+  if (!canon) {
+    // Maybe an old-style key code ("M106", "265"...)
+    keyspec_t k;
+    if (!key_from_legacy(name, &k)) {
+      g_free(key_canonicalize(name, err)); // Sets the error
+      return FALSE;
+    }
+    canon = key_format(&k);
+  }
+  mlua_unbind(canon);
+  if (command)
+    settings_set(SETTINGS_TYPE_BINDING, canon, command);
+  else
+    settings_del(SETTINGS_TYPE_BINDING, canon);
+  g_free(canon);
+  return TRUE;
 }
 
 //  scr_init_bindings()
 // Create default key bindings
-// Return 0 if error and 1 if none
 void scr_init_bindings(void)
 {
-  GString *sbuf = g_string_new("");
+  static const struct { const char *key, *cmd; } defaults[] = {
+    { "Backspace",  "iline char_bdel" },
+    { "Ctrl+h",     "iline char_bdel" },
+    { "Del",        "iline char_fdel" },
+    { "Left",       "iline bchar" },
+    { "Right",      "iline fchar" },
+    { "Ctrl+g",     "iline compl_cancel" },
+    { "Up",         "iline line_up_or_hist" },
+    { "Down",       "iline line_down_or_hist" },
+    { "PgUp",       "roster up" },
+    { "PgDn",       "roster down" },
+    { "Home",       "iline iline_start" },
+    { "Ctrl+a",     "iline iline_start" },
+    { "End",        "iline iline_end" },
+    { "Ctrl+e",     "iline iline_end" },
+    { "Ctrl+Home",  "iline buffer_start" },
+    { "Ctrl+End",   "iline buffer_end" },
+    { "Alt+Enter",  "iline newline" },
+    { "Ctrl+j",     "iline newline" },
+    { "Ctrl+o",     "iline iline_accept_down_hist" },
+    { "Ctrl+u",     "iline iline_bdel" },
+    { "Ctrl+k",     "iline iline_fdel" },
+    { "Ctrl+p",     "buffer up" },
+    { "Ctrl+n",     "buffer down" },
+    { "Ctrl+t",     "iline char_swap" },
+    { "Ctrl+w",     "iline word_bdel" },
+    { "Alt+b",      "iline bword" },
+    { "Ctrl+Left",  "iline bword" },
+    { "Alt+f",      "iline fword" },
+    { "Ctrl+Right", "iline fword" },
+    { "Alt+d",      "iline word_fdel" },
+    { "Ctrl+l",     "screen_refresh" },
+    { "Esc",        "chat_disable --show-roster" },
+    { "Alt+Esc",    "chat_disable" },
+    { "Ctrl+d",     "iline send_multiline" },
+    { "Alt+u",      "iline word_upcase" },
+    { "Alt+l",      "iline word_downcase" },
+    { "Alt+c",      "iline word_capit" },
+    { "F1",         "help" },
+    { NULL, NULL }
+  };
+  int i;
 
-  // Common backspace key codes: 8, 127
-  settings_set(SETTINGS_TYPE_BINDING, "8", "iline char_bdel");    // Ctrl-h
-  settings_set(SETTINGS_TYPE_BINDING, "127", "iline char_bdel");
-  g_string_printf(sbuf, "%d", KEY_BACKSPACE);
-  settings_set(SETTINGS_TYPE_BINDING, sbuf->str, "iline char_bdel");
-  g_string_printf(sbuf, "%d", KEY_DC);
-  settings_set(SETTINGS_TYPE_BINDING, sbuf->str, "iline char_fdel");
-  g_string_printf(sbuf, "%d", KEY_LEFT);
-  settings_set(SETTINGS_TYPE_BINDING, sbuf->str, "iline bchar");
-  g_string_printf(sbuf, "%d", KEY_RIGHT);
-  settings_set(SETTINGS_TYPE_BINDING, sbuf->str, "iline fchar");
-  settings_set(SETTINGS_TYPE_BINDING, "7", "iline compl_cancel"); // Ctrl-g
-  g_string_printf(sbuf, "%d", KEY_UP);
-  settings_set(SETTINGS_TYPE_BINDING, sbuf->str,
-               "iline hist_beginning_search_bwd");
-  g_string_printf(sbuf, "%d", KEY_DOWN);
-  settings_set(SETTINGS_TYPE_BINDING, sbuf->str,
-               "iline hist_beginning_search_fwd");
-  g_string_printf(sbuf, "%d", KEY_PPAGE);
-  settings_set(SETTINGS_TYPE_BINDING, sbuf->str, "roster up");
-  g_string_printf(sbuf, "%d", KEY_NPAGE);
-  settings_set(SETTINGS_TYPE_BINDING, sbuf->str, "roster down");
-  g_string_printf(sbuf, "%d", KEY_HOME);
-  settings_set(SETTINGS_TYPE_BINDING, sbuf->str, "iline iline_start");
-  settings_set(SETTINGS_TYPE_BINDING, "1", "iline iline_start");  // Ctrl-a
-  g_string_printf(sbuf, "%d", KEY_END);
-  settings_set(SETTINGS_TYPE_BINDING, sbuf->str, "iline iline_end");
-  settings_set(SETTINGS_TYPE_BINDING, "5", "iline iline_end");    // Ctrl-e
-  // Ctrl-o (accept-line-and-down-history):
-  settings_set(SETTINGS_TYPE_BINDING, "15", "iline iline_accept_down_hist");
-  settings_set(SETTINGS_TYPE_BINDING, "21", "iline iline_bdel");  // Ctrl-u
-  g_string_printf(sbuf, "%d", KEY_EOL);
-  settings_set(SETTINGS_TYPE_BINDING, sbuf->str, "iline iline_fdel");
-  settings_set(SETTINGS_TYPE_BINDING, "11", "iline iline_fdel");  // Ctrl-k
-  settings_set(SETTINGS_TYPE_BINDING, "16", "buffer up");         // Ctrl-p
-  settings_set(SETTINGS_TYPE_BINDING, "14", "buffer down");       // Ctrl-n
-  settings_set(SETTINGS_TYPE_BINDING, "20", "iline char_swap");   // Ctrl-t
-  settings_set(SETTINGS_TYPE_BINDING, "23", "iline word_bdel");   // Ctrl-w
-  settings_set(SETTINGS_TYPE_BINDING, "M98", "iline bword");      // Meta-b
-  settings_set(SETTINGS_TYPE_BINDING, "M102", "iline fword");     // Meta-f
-  settings_set(SETTINGS_TYPE_BINDING, "M100", "iline word_fdel"); // Meta-d
-  // Ctrl-Left  (2 codes):
-  settings_set(SETTINGS_TYPE_BINDING, "515", "iline bword");
-  settings_set(SETTINGS_TYPE_BINDING, "516", "iline bword");
-  // Ctrl-Right (2 codes):
-  settings_set(SETTINGS_TYPE_BINDING, "517", "iline fword");
-  settings_set(SETTINGS_TYPE_BINDING, "518", "iline fword");
-  settings_set(SETTINGS_TYPE_BINDING, "12", "screen_refresh");    // Ctrl-l
-  settings_set(SETTINGS_TYPE_BINDING, "27", "chat_disable --show-roster");// Esc
-  settings_set(SETTINGS_TYPE_BINDING, "M27", "chat_disable");     // Esc-Esc
-  settings_set(SETTINGS_TYPE_BINDING, "4", "iline send_multiline"); // Ctrl-d
-  settings_set(SETTINGS_TYPE_BINDING, "M117", "iline word_upcase"); // Meta-u
-  settings_set(SETTINGS_TYPE_BINDING, "M108", "iline word_downcase"); // Meta-l
-  settings_set(SETTINGS_TYPE_BINDING, "M99", "iline word_capit"); // Meta-c
-
-  settings_set(SETTINGS_TYPE_BINDING, "265", "help"); // Bind F1 to help...
-
-  g_string_free(sbuf, TRUE);
+  for (i = 0; defaults[i].key; i++)
+    scr_bind_key(defaults[i].key, defaults[i].cmd, NULL);
 }
 
 //  is_speckey(key)
@@ -741,33 +999,8 @@ void scr_init_bindings(void)
 // isprint(KEY_PPAGE) returns TRUE...
 static int is_speckey(int key)
 {
-  switch (key) {
-    case 127:
-    case 393:
-    case 402:
-    case KEY_BACKSPACE:
-    case KEY_DC:
-    case KEY_LEFT:
-    case KEY_RIGHT:
-    case KEY_UP:
-    case KEY_DOWN:
-    case KEY_PPAGE:
-    case KEY_NPAGE:
-    case KEY_HOME:
-    case KEY_END:
-    case KEY_EOL:
-        return TRUE;
-  }
-
-  // Fn keys
-  if (key >= 265 && key < 265+12)
-    return TRUE;
-
-  // Special key combinations
-  if (key >= 513 && key <= 521)
-    return TRUE;
-
-  return FALSE;
+  // ncurses key codes (KEY_*, function keys, run-time defined keys)
+  return key == 127 || key >= KEY_MIN;
 }
 
 void scr_init_locale_charset(void)
@@ -803,10 +1036,42 @@ static gchar *scr_color_guard(const gchar *key, const gchar *new_value)
   return g_strdup(new_value);
 }
 
+// Bracketed paste mode: the terminal sends \e[200~ before and \e[201~
+// after pasted text.  write() is used so that it works in signal handlers.
+static gboolean bracketed_paste;
+
+static void bracketed_paste_disable(void)
+{
+  if (bracketed_paste) {
+    static const char seq[] = "\033[?2004l";
+    ssize_t ret = write(STDOUT_FILENO, seq, sizeof(seq) - 1);
+    (void)ret;  // Nothing we can do if it fails
+    bracketed_paste = FALSE;
+  }
+}
+
+static void bracketed_paste_enable(void)
+{
+  static gboolean atexit_done;
+  static const char seq[] = "\033[?2004h";
+  const char *opt = settings_opt_get("paste_bracketed");
+
+  if (opt && !atoi(opt))
+    return;
+  if (write(STDOUT_FILENO, seq, sizeof(seq) - 1) < 0)
+    return;
+  bracketed_paste = TRUE;
+  if (!atexit_done) {
+    atexit(bracketed_paste_disable);
+    atexit_done = TRUE;
+  }
+}
+
 void scr_init_curses(void)
 {
   /* Key sequences initialization */
   init_keycodes();
+  il_layout_init(&InputLayout);
 
   initscr();
   raw();
@@ -815,6 +1080,8 @@ void scr_init_curses(void)
   intrflush(stdscr, FALSE);
   start_color();
   use_default_colors();
+  colors_started = TRUE;
+  bracketed_paste_enable();
 #ifdef NCURSES_MOUSE_VERSION
   if (settings_opt_get_int("use_mouse"))
     mousemask(ALL_MOUSE_EVENTS, NULL);
@@ -868,6 +1135,7 @@ void scr_init_curses(void)
 void scr_terminate_curses(void)
 {
   if (!Curses) return;
+  bracketed_paste_disable();
   clear();
   refresh();
   endwin();
@@ -881,18 +1149,6 @@ void scr_beep(void)
 }
 
 // This and following belongs to dynamic setting of time prefix
-static const char *timeprefixes[] = {
-  "%m-%d %H:%M ",
-  "%H:%M ",
-  " "
-};
-
-static const char *spectimeprefixes[] = {
-  "%m-%d %H:%M:%S   ",
-  "%H:%M:%S   ",
-  "   "
-};
-
 static int timepreflengths[] = {
   // (length of the corresponding timeprefix + 5)
   17,
@@ -900,34 +1156,23 @@ static int timepreflengths[] = {
   6
 };
 
-static const char *gettprefix(void)
-{
-  guint n = settings_opt_get_int("time_prefix");
-  return timeprefixes[(n < 3 ? n : 0)];
-}
-
-static const char *getspectprefix(void)
-{
-  guint n = settings_opt_get_int("time_prefix");
-  return spectimeprefixes[(n < 3 ? n : 0)];
-}
-
 guint scr_getprefixwidth(void)
 {
   guint n = settings_opt_get_int("time_prefix");
   return timepreflengths[(n < 3 ? n : 0)];
 }
 
+//  scr_gettextwidth()
+// Width of the chat window (the text width depends on the head of each
+// message).
 guint scr_gettextwidth(void)
 {
-  int used_width = Roster_Width + scr_getprefixwidth();
-  return maxX > used_width ? maxX - used_width : 0;
+  return chat_rect(FALSE).w;
 }
 
 guint scr_gettextheight(void)
 {
-  // log window, two status bars and one input line
-  return maxY - Log_Win_Height - 3;
+  return Layout.chat.h;
 }
 
 guint scr_getlogwinheight(void)
@@ -1003,13 +1248,13 @@ void scr_log_print(unsigned int flag, const char *fmt, ...)
     if (Curses) {
       wprintw(logWnd, "\n%s", buffer_locale);
       update_panels();
-      scr_write_in_window(NULL, buf_specialwindow, timestamp,
-                          HBB_PREFIX_SPECIAL, FALSE, 0, NULL);
+      scr_write_in_window(NULL, buf_specialwindow, NULL, timestamp,
+                          HBB_PREFIX_SPECIAL, FALSE, NULL);
     } else {
       printf("%s\n", buffer_locale);
       // ncurses are not initialized yet, so we call directly hbuf routine
-      hbuf_add_line(&statushbuf, buf_specialwindow, timestamp,
-        HBB_PREFIX_SPECIAL, 0, 0, 0, NULL);
+      hbuf_add_line(&statushbuf, buf_specialwindow, NULL, timestamp,
+        HBB_PREFIX_SPECIAL, 0, 0, NULL);
     }
 
     g_free(convbuf1);
@@ -1058,6 +1303,60 @@ int scr_buddy_buffer_exists(const char *bjid)
 
 //  scr_new_buddy(title, dontshow)
 // Note: title (aka winId/jid) can be NULL for special buffers
+/* -- Geometry of the chat window -- */
+
+//  chat_rect(room)
+// Position of the chat window: rooms leave room for the members column.
+static rect_t chat_rect(gboolean room)
+{
+  rect_t r = Layout.chat;
+
+  if (room || !Layout.members.w)
+    return r;
+  r.w += Layout.members.w + (Layout.borders ? 1 : 0);
+  if (Layout.members.x < Layout.chat.x)
+    r.x = Layout.members.x;
+  return r;
+}
+
+static gboolean winbuf_is_room(winbuf_t *w)
+{
+  return w && w->jid && roster_find(w->jid, jidsearch, ROSTER_TYPE_ROOM);
+}
+
+//  sync_buffer_width(w)
+// Rewrap the lines of the buffer if the width of its window has changed.
+static int sync_buffer_width(winbuf_t *w)
+{
+  int width = chat_rect(winbuf_is_room(w)).w;
+
+  if (w->bd->width != width) {
+    w->bd->top = hbuf_previous_persistent(w->bd->top);
+    hbuf_rebuild(&w->bd->hbuf, width);
+    w->bd->width = width;
+  }
+  return width;
+}
+
+//  place_chat_window(w)
+// Move/resize the (shared) chat window for this buffer.
+static void place_chat_window(winbuf_t *w)
+{
+  rect_t r = chat_rect(winbuf_is_room(w));
+  int y, x, h, ww;
+
+  getbegyx(w->win, y, x);
+  getmaxyx(w->win, h, ww);
+  if (y != r.y || x != r.x || h != MAX(r.h, 1) || ww != MAX(r.w, 1)) {
+    wresize(w->win, MAX(r.h, 1), MAX(r.w, 1));
+    mvwin(w->win, r.y, r.x);
+    if (w->panel)
+      replace_panel(w->panel, w->win);
+    werase(w->win);
+  }
+  sync_buffer_width(w);
+}
+
 static winbuf_t *scr_new_buddy(const char *title, int dont_show)
 {
   winbuf_t *tmp;
@@ -1067,6 +1366,7 @@ static winbuf_t *scr_new_buddy(const char *title, int dont_show)
 
   tmp->win = activechatWnd;
   tmp->panel = activechatPanel;
+  tmp->jid = g_strdup(title);
 
   if (!dont_show) {
     currentWindow = tmp;
@@ -1096,7 +1396,9 @@ static winbuf_t *scr_new_buddy(const char *title, int dont_show)
     g_free(id);
   } else {  // Load buddy history from file (if enabled)
     tmp->bd = g_new0(buffdata_t, 1);
-    hlog_read_history(title, &tmp->bd->hbuf, scr_gettextwidth());
+    tmp->bd->width = chat_rect(roster_find(title, jidsearch,
+                                           ROSTER_TYPE_ROOM) != NULL).w;
+    hlog_read_history(title, &tmp->bd->hbuf, tmp->bd->width);
 
     // Set a readmark to separate new content
     hbuf_set_readmark(tmp->bd->hbuf, TRUE);
@@ -1109,67 +1411,153 @@ static winbuf_t *scr_new_buddy(const char *title, int dont_show)
   return tmp;
 }
 
-//  scr_line_prefix(line, pref, preflen)
-// Use data from the hbb_line structure and write the prefix
-// to pref (not exceeding preflen, trailing null byte included).
-size_t scr_line_prefix(hbb_line *line, char *pref, guint preflen)
+//  nick_color(nick, flags, &attr)
+// Color of a nickname in a room (nick_colors option, /color mucnick and
+// /color muc).  Returns FALSE if the nickname is not colored.
+static gboolean nick_color(const char *nick, guint flags, int *attr)
 {
-  char date[64];
-  size_t timepreflen = 0;
+  char *mucjid, *key;
+  nickcolor_t *actual = NULL;
+  muccol_t type, *typetmp;
 
-  if (line->timestamp &&
-      !(line->flags & (HBB_PREFIX_SPECIAL|HBB_PREFIX_CONT))) {
-    timepreflen = strftime(date, 30, gettprefix(), localtime(&line->timestamp));
-  } else
-    strcpy(date, "           ");
+  if (!nick || !current_buddy)
+    return FALSE;
 
-  if (!(line->flags & HBB_PREFIX_CONT)) {
-    if (line->flags & HBB_PREFIX_INFO) {
-      char dir = '*';
-      if (line->flags & HBB_PREFIX_IN)
-        dir = '<';
-      else if (line->flags & HBB_PREFIX_OUT)
-        dir = '>';
-      g_snprintf(pref, preflen, "%s*%c* ", date, dir);
-    } else if (line->flags & HBB_PREFIX_ERR) {
-      char dir = '#';
-      if (line->flags & HBB_PREFIX_IN)
-        dir = '<';
-      else if (line->flags & HBB_PREFIX_OUT)
-        dir = '>';
-      g_snprintf(pref, preflen, "%s#%c# ", date, dir);
-    } else if (line->flags & HBB_PREFIX_IN) {
-      char cryptflag;
-      if (line->flags & HBB_PREFIX_PGPCRYPT)
-        cryptflag = '~';
-      else if (line->flags & HBB_PREFIX_OTRCRYPT)
-        cryptflag = 'O';
-      else
-        cryptflag = '=';
-      g_snprintf(pref, preflen, "%s<%c= ", date, cryptflag);
-    } else if (line->flags & HBB_PREFIX_OUT) {
-      char cryptflag, receiptflag;
-      if (line->flags & HBB_PREFIX_PGPCRYPT)
-        cryptflag = '~';
-      else if (line->flags & HBB_PREFIX_OTRCRYPT)
-        cryptflag = 'O';
-      else
-        cryptflag = '-';
-      if (line->flags & HBB_PREFIX_RECEIPT)
-        receiptflag = 'r';
-      else
-        receiptflag = '-';
-      g_snprintf(pref, preflen, "%s%c%c> ", date, receiptflag, cryptflag);
-    } else if (line->flags & HBB_PREFIX_SPECIAL) {
-      timepreflen = strftime(date, 30, getspectprefix(), localtime(&line->timestamp));
-      g_snprintf(pref, preflen, "%s   ", date);
-    } else {
-      g_snprintf(pref, preflen, "%s    ", date);
-    }
-  } else {
-    g_snprintf(pref, preflen, "                ");
+  type = glob_muccol;
+  mucjid = g_utf8_strdown(CURRENT_JID, -1);
+  if (muccolors) {
+    typetmp = g_hash_table_lookup(muccolors, mucjid);
+    if (typetmp)
+      type = *typetmp;
   }
-  return timepreflen;
+  g_free(mucjid);
+
+  // The nickname colors are stored with the "<nick>" and "*nick " keys
+  key = g_strdup_printf("<%s>", nick);
+  // Need to generate a color for the specified nick?
+  if ((type == MC_ALL) && (!nickcolors ||
+      !g_hash_table_lookup(nickcolors, key))) {
+    nickcolor_t *nc;
+    const char *p = key;
+    unsigned int nicksum = 0;
+    nc = g_new(nickcolor_t, 1);
+    ensure_string_htable(&nickcolors, NULL);
+    while (*p)
+      nicksum += *p++;
+    nc->color = nickcols[nicksum % nickcolcount];
+    nc->manual = FALSE;
+    g_hash_table_insert(nickcolors, g_strdup(key), nc);
+    g_hash_table_insert(nickcolors, g_strdup_printf("*%s ", nick), nc);
+  }
+  if (nickcolors)
+    actual = g_hash_table_lookup(nickcolors, key);
+  g_free(key);
+  if (actual && ((type == MC_ALL) || (actual->manual))
+      && (flags & HBB_PREFIX_IN) && !(flags & HBB_PREFIX_HLIGHT_OUT)) {
+    *attr = compose_color(actual->color);
+    return TRUE;
+  }
+  return FALSE;
+}
+
+//  internal_style(name)
+// Internal color (COLOR_*) of a style name, or -1.
+static int internal_style(const char *name)
+{
+  static const struct { const char *name; int color; } styles[] = {
+    { "general",      COLOR_GENERAL },
+    { "msgout",       COLOR_MSGOUT },
+    { "msghl",        COLOR_MSGHL },
+    { "status",       COLOR_STATUS },
+    { "log",          COLOR_LOG },
+    { "roster",       COLOR_ROSTER },
+    { "rostersel",    COLOR_ROSTERSEL },
+    { "rosterselmsg", COLOR_ROSTERSELNMSG },
+    { "rosternewmsg", COLOR_ROSTERNMSG },
+    { "info",         COLOR_INFO },
+    { "msgin",        COLOR_MSGIN },
+    { "readmark",     COLOR_READMARK },
+    { "timestamp",    COLOR_TIMESTAMP },
+    { NULL, 0 }
+  };
+  int i;
+  for (i = 0; styles[i].name; i++)
+    if (!strcmp(name, styles[i].name))
+      return styles[i].color;
+  return -1;
+}
+
+//  style_attr(style, line_color, nick, flags)
+// Attributes for a style name used in a message format.
+static int style_attr(const char *style, int line_color, const char *nick,
+                      guint flags)
+{
+  int color, attr;
+
+  if (!style)
+    return get_color(line_color);
+  if (!strcmp(style, "nick"))
+    return nick_color(nick, flags, &attr) ? attr : (int)get_color(line_color);
+  color = internal_style(style);
+  if (color >= 0)
+    return get_color(color);
+  if (custom_style_attr(style, &attr))
+    return attr;
+  return get_color(line_color);
+}
+
+//  run_attr(style, base)
+// Attributes for a style of a format (roster, status lines).
+static int run_attr(const char *style, int base)
+{
+  int color, attr;
+
+  if (!style)
+    return base;
+  color = internal_style(style);
+  if (color >= 0)
+    return get_color(color);
+  if (custom_style_attr(style, &attr))
+    return attr;
+  return base;
+}
+
+//  draw_sstr(win, s, base, plain, max)
+// Draw a styled string at the cursor position (with the base attributes
+// only if plain is TRUE), on at most max cells.
+static void draw_sstr(WINDOW *win, const sstr_t *s, int base, gboolean plain,
+                      int max)
+{
+  guint r;
+  int used = 0;
+
+  for (r = 0; r < s->runs->len; r++) {
+    srun_t *run = &g_array_index(s->runs, srun_t, r);
+    const char *p = s->text->str + run->start;
+    const char *end = p + run->len;
+    wattrset(win, plain ? base : run_attr(run->style, base));
+    while (p < end) {
+      const char *next = next_char((char *)p);
+      int w = get_char_width(p);
+      if (w < 0)
+        w = 1;
+      if (used + w > max)
+        goto done;
+      waddnstr(win, p, next - p);
+      used += w;
+      p = next;
+    }
+  }
+done:
+  wattrset(win, base);
+}
+
+//  status_icon(status, def)
+// Icon of a status (mc.format.icons), or the given character.
+static gchar *status_icon(const char *status, char def)
+{
+  gchar *icon = msgfmt_icon(status);
+  return icon ? icon : g_strdup_printf("%c", def);
 }
 
 //  scr_update_window()
@@ -1177,8 +1565,6 @@ size_t scr_line_prefix(hbb_line *line, char *pref, guint preflen)
 static void scr_update_window(winbuf_t *win_entry)
 {
   int n, mark_offset = 0;
-  guint prefixwidth;
-  char pref[96];
   hbb_line **lines, *line;
   GList *hbuf_head;
   int color = COLOR_GENERAL;
@@ -1188,8 +1574,7 @@ static void scr_update_window(winbuf_t *win_entry)
 
   autolock = settings_opt_get_int("buffer_smart_scrolling");
 
-  prefixwidth = scr_getprefixwidth();
-  prefixwidth = MIN(prefixwidth, sizeof pref);
+  place_chat_window(win_entry);
 
   // Should the window be empty?
   if (win_entry->bd->cleared) {
@@ -1247,7 +1632,6 @@ static void scr_update_window(winbuf_t *win_entry)
 
   // Display the lines
   for (n = 0 ; n < CHAT_WIN_HEIGHT; n++) {
-    int timelen;
     int winy = n + mark_offset;
     wmove(win_entry->win, winy, 0);
     line = *(lines+n);
@@ -1269,82 +1653,27 @@ static void scr_update_window(winbuf_t *win_entry)
       if (color != COLOR_GENERAL)
         wbkgdset(win_entry->win, get_color(color));
 
-      // Generate the prefix area and display it
-
-      timelen = scr_line_prefix(line, pref, prefixwidth);
-      if (timelen && line->flags & HBB_PREFIX_DELAYED) {
-        char tmp;
-
-        tmp = pref[timelen];
-        pref[timelen] = '\0';
-        wbkgdset(win_entry->win, get_color(COLOR_TIMESTAMP));
-        wprintw(win_entry->win, "%s", pref);
-        pref[timelen] = tmp;
-        wbkgdset(win_entry->win, get_color(color));
-        wprintw(win_entry->win, "%s", pref+timelen);
-      } else
-        wprintw(win_entry->win, "%s", pref);
-
-      // Make sure we are at the right position
-      wmove(win_entry->win, winy, prefixwidth-1);
-
-      // The MUC nick - overwrite with proper color
-      if (line->mucnicklen) {
-        char *mucjid;
-        char tmp;
-        nickcolor_t *actual = NULL;
-        muccol_t type, *typetmp;
-
-        // Store the char after the nick
-        tmp = line->text[line->mucnicklen];
-        type = glob_muccol;
-        // Terminate the string after the nick
-        line->text[line->mucnicklen] = '\0';
-        mucjid = g_utf8_strdown(CURRENT_JID, -1);
-        if (muccolors) {
-          typetmp = g_hash_table_lookup(muccolors, mucjid);
-          if (typetmp)
-            type = *typetmp;
+      // Display the head of the message (time, nickname...)
+      if (line->flags & HBB_PREFIX_CONT) {
+        wclrtoeol(win_entry->win);
+      } else {
+        sstr_t *head = sstr_new();
+        guint r;
+        msgfmt_head(line->timestamp, line->flags, line->nick, head);
+        for (r = 0; r < head->runs->len; r++) {
+          srun_t *run = &g_array_index(head->runs, srun_t, r);
+          wbkgdset(win_entry->win,
+                   style_attr(run->style, color, line->nick, line->flags));
+          waddnstr(win_entry->win, head->text->str + run->start, run->len);
         }
-        g_free(mucjid);
-        // Need to generate a color for the specified nick?
-        if ((type == MC_ALL) && (!nickcolors ||
-            !g_hash_table_lookup(nickcolors, line->text))) {
-          char *snick, *mnick;
-          nickcolor_t *nc;
-          const char *p = line->text;
-          unsigned int nicksum = 0;
-          snick = g_strdup(line->text);
-          mnick = g_strdup(line->text);
-          nc = g_new(nickcolor_t, 1);
-          ensure_string_htable(&nickcolors, NULL);
-          while (*p)
-            nicksum += *p++;
-          nc->color = nickcols[nicksum % nickcolcount];
-          nc->manual = FALSE;
-          *snick = '<';
-          snick[strlen(snick)-1] = '>';
-          *mnick = '*';
-          mnick[strlen(mnick)-1] = ' ';
-          // Insert them
-          g_hash_table_insert(nickcolors, snick, nc);
-          g_hash_table_insert(nickcolors, mnick, nc);
-        }
-        if (nickcolors)
-          actual = g_hash_table_lookup(nickcolors, line->text);
-        if (actual && ((type == MC_ALL) || (actual->manual))
-            && (line->flags & HBB_PREFIX_IN) &&
-           (!(line->flags & HBB_PREFIX_HLIGHT_OUT)))
-          wbkgdset(win_entry->win, compose_color(actual->color));
-        wprintw(win_entry->win, "%s", line->text);
-        // Return the char
-        line->text[line->mucnicklen] = tmp;
-        // Return the color back
         wbkgdset(win_entry->win, get_color(color));
+        sstr_free(head);
       }
 
       // Display text line
-      wprintw(win_entry->win, "%s", line->text+line->mucnicklen);
+      wmove(win_entry->win, winy,
+            (line->flags & HBB_PREFIX_CONT) ? line->contw : line->headw);
+      wprintw(win_entry->win, "%s", line->text);
       wclrtoeol(win_entry->win);
 
       // Restore default ("general") color
@@ -1361,9 +1690,8 @@ scr_update_window_skipline:
         winy = n + mark_offset;
         wmove(win_entry->win, winy, 0);
         wbkgdset(win_entry->win, get_color(COLOR_READMARK));
-        g_snprintf(pref, prefixwidth, "             == ");
-        wprintw(win_entry->win, "%s", pref);
-        w = scr_gettextwidth() / 3;
+        wprintw(win_entry->win, "             == ");
+        w = ((int)scr_gettextwidth() - 17) / 3;
         for (i=0; i<w; i++)
           wprintw(win_entry->win, "== ");
         wclrtoeol(win_entry->win);
@@ -1418,7 +1746,11 @@ static void scr_show_window(const char *winId, int special)
     win_entry = scr_create_window(winId, special, FALSE);
   }
 
+  console_shown = FALSE;
   top_panel(win_entry->panel);
+  // The splash window is wider than a room window: hide it
+  // (top_panel() shows it again)
+  hide_panel(chatPanel);
   currentWindow = win_entry;
   chatmode = TRUE;
   if (!win_entry->bd->lock)
@@ -1429,6 +1761,7 @@ static void scr_show_window(const char *winId, int special)
 
   // Refresh the window
   scr_update_window(win_entry);
+  draw_members();
 
   // Finished :)
   update_panels();
@@ -1443,6 +1776,11 @@ void scr_show_buddy_window(void)
   const gchar *bjid;
 
   buddylist_build();
+  // The XMPP console stays displayed until another buddy is selected
+  if (console_shown && current_buddy == console_buddy) {
+    console_show();
+    return;
+  }
   if (!current_buddy) {
     bjid = NULL;
   } else {
@@ -1485,18 +1823,17 @@ void scr_update_buddy_window(void)
 // Lines are splitted when they are too long to fit in the chat window.
 // If this window doesn't exist, it is created.
 static void scr_write_in_window(const char *winId, const char *text,
-                                time_t timestamp, unsigned int prefix_flags,
-                                int force_show, unsigned mucnicklen,
+                                const char *nick, time_t timestamp,
+                                unsigned int prefix_flags, int force_show,
                                 gpointer xep184)
 {
   winbuf_t *win_entry;
-  char *text_locale;
+  char *text_locale, *nick_locale;
   int dont_show = FALSE;
   int special;
   guint num_history_blocks;
   bool setmsgflg = FALSE;
   bool clearmsgflg = FALSE;
-  char *nicktmp, *nicklocaltmp;
 
   // Look for the window entry.
   special = (winId == NULL);
@@ -1525,18 +1862,12 @@ static void scr_write_in_window(const char *winId, const char *text,
     num_history_blocks = get_max_history_blocks();
 
   text_locale = from_utf8(text);
-  // Convert the nick alone and compute its length
-  if (mucnicklen) {
-    nicktmp = g_strndup(text, mucnicklen);
-    nicklocaltmp = from_utf8(nicktmp);
-    if (nicklocaltmp)
-      mucnicklen = strlen(nicklocaltmp);
-    g_free(nicklocaltmp);
-    g_free(nicktmp);
-  }
-  hbuf_add_line(&win_entry->bd->hbuf, text_locale, timestamp, prefix_flags,
-                scr_gettextwidth(), num_history_blocks, mucnicklen, xep184);
+  nick_locale = from_utf8(nick);
+  hbuf_add_line(&win_entry->bd->hbuf, text_locale, nick_locale, timestamp,
+                prefix_flags, sync_buffer_width(win_entry),
+                num_history_blocks, xep184);
   g_free(text_locale);
+  g_free(nick_locale);
 
   if (win_entry->bd->cleared) {
     win_entry->bd->cleared = FALSE;
@@ -1625,6 +1956,44 @@ static unsigned int attention_sign(void)
 // Redraw the main (bottom) status line.
 // You can set forceupdate to FALSE in order to optimize screen refresh
 // if you call top_panel()/update_panels() later.
+typedef struct {
+  guint unread;         // Unread/attention character (or ' ')
+  const char *info;
+  const char *msg;
+} main_status_t;
+
+static const char *const main_status_fields[] = {
+  "unread", "status", "status_char", "icon", "info", "msg", "jid", NULL
+};
+
+static gchar *main_status_field(const char *name, const char *arg,
+                                gpointer data)
+{
+  main_status_t *ms = data;
+  enum imstatus st = xmpp_getstatus();
+
+  if (!strcmp(name, "unread")) {
+    gchar buf[8] = { 0 };
+    if (ms->unread == ' ')
+      return NULL;
+    g_unichar_to_utf8(ms->unread, buf);
+    return g_strdup(buf);
+  }
+  if (!strcmp(name, "status"))
+    return g_strdup(mlua_status_name(st));
+  if (!strcmp(name, "status_char"))
+    return g_strdup_printf("%c", imstatus2char[st]);
+  if (!strcmp(name, "icon"))
+    return status_icon(mlua_status_name(st), imstatus2char[st]);
+  if (!strcmp(name, "info"))
+    return g_strdup(ms->info);
+  if (!strcmp(name, "msg"))
+    return (ms->msg && *ms->msg) ? g_strdup(ms->msg) : NULL;
+  if (!strcmp(name, "jid"))
+    return g_strdup(settings_opt_get("jid"));
+  return NULL;
+}
+
 void scr_update_main_status(int forceupdate)
 {
   char *sm = from_utf8(xmpp_getstatusmsg());
@@ -1651,6 +2020,22 @@ void scr_update_main_status(int forceupdate)
     unreadchar = ' ';
 
   werase(mainstatusWnd);
+  if (msgfmt_ui_has("main_status")) {
+    main_status_t ms;
+    sstr_t *line = sstr_new();
+    ms.unread = unreadchar;
+    ms.info = info;
+    ms.msg = sm;
+    if (msgfmt_ui("main_status", NULL, main_status_fields, main_status_field,
+                  &ms, getmaxx(mainstatusWnd), line)) {
+      wmove(mainstatusWnd, 0, 0);
+      draw_sstr(mainstatusWnd, line, getbkgd(mainstatusWnd) & A_ATTRIBUTES,
+                FALSE, getmaxx(mainstatusWnd));
+      sstr_free(line);
+      goto main_status_done;
+    }
+    sstr_free(line);
+  }
   if (info) {
     char *info_locale = from_utf8(info);
     mvwprintw(mainstatusWnd, 0, 0, "%lc[%c] %s %s", unreadchar,
@@ -1660,11 +2045,189 @@ void scr_update_main_status(int forceupdate)
   } else
     mvwprintw(mainstatusWnd, 0, 0, "%lc[%c] %s", unreadchar,
               imstatus2char[xmpp_getstatus()], (sm ? sm : ""));
+main_status_done:
   if (forceupdate) {
     top_panel(inputPanel);
     update_panels();
   }
   g_free(sm);
+}
+
+/* -- Members of the current room -- */
+
+enum { MEMBERS_NONE, MEMBERS_COLUMN, MEMBERS_OVERLAY };
+
+//  members_mode()
+// muc_members option: "column" (default), "overlay" or "none".
+static int members_mode(void)
+{
+  const char *m = settings_opt_get("muc_members");
+  if (m && (!strcmp(m, "none") || !strcmp(m, "0") || !strcmp(m, "off")))
+    return MEMBERS_NONE;
+  if (m && !strcmp(m, "overlay"))
+    return MEMBERS_OVERLAY;
+  return MEMBERS_COLUMN;
+}
+
+static int members_width(void)
+{
+  int w = settings_opt_get_int("muc_members_width");
+  return w > 2 ? w : 20;
+}
+
+/* -- Frames -- */
+
+typedef struct {
+  const char *name;
+  const char *h, *v, *tl, *tr, *bl, *br, *lt, *rt, *tt, *bt;
+} frame_chars_t;
+
+static const frame_chars_t frame_sets[] = {
+  { "ascii",   "-", "|", "+", "+", "+", "+", "+", "+", "+", "+" },
+  { "single",  "\u2500", "\u2502", "\u250c", "\u2510", "\u2514", "\u2518",
+               "\u251c", "\u2524", "\u252c", "\u2534" },
+  { "rounded", "\u2500", "\u2502", "\u256d", "\u256e", "\u2570", "\u256f",
+               "\u251c", "\u2524", "\u252c", "\u2534" },
+  { "double",  "\u2550", "\u2551", "\u2554", "\u2557", "\u255a", "\u255d",
+               "\u2560", "\u2563", "\u2566", "\u2569" },
+  { "heavy",   "\u2501", "\u2503", "\u250f", "\u2513", "\u2517", "\u251b",
+               "\u2523", "\u252b", "\u2533", "\u253b" },
+  { NULL }
+};
+
+//  frame_chars()
+// Characters of the frames (ui_borders option), or NULL if there is none.
+static const frame_chars_t *frame_chars(void)
+{
+  const char *opt = settings_opt_get("ui_borders");
+  int i;
+
+  if (!opt || !*opt || !strcmp(opt, "none") || !strcmp(opt, "0"))
+    return NULL;
+  if (!utf8_mode)
+    return &frame_sets[0];
+  for (i = 0; frame_sets[i].name; i++)
+    if (!strcmp(opt, frame_sets[i].name))
+      return &frame_sets[i];
+  return &frame_sets[2];  // rounded
+}
+
+static int named_style_attr(const char *name, int fallback)
+{
+  int attr;
+  if (custom_style_attr(name, &attr))
+    return attr;
+  return get_color(fallback);
+}
+
+//  fill_hline(win, y, x, n)
+// Draw a horizontal frame line.
+static void fill_hline(WINDOW *win, int y, int x, int n)
+{
+  const frame_chars_t *fc = frame_chars();
+  int i;
+  if (!fc)
+    return;
+  wmove(win, y, x);
+  for (i = 0; i < n; i++)
+    waddstr(win, fc->h);
+}
+
+static void draw_title(int y, int x, int maxw, const char *option,
+                       const char *def)
+{
+  const char *title = settings_opt_get(option);
+  gchar *t, *tl;
+
+  if (!title)
+    title = def;
+  if (!*title || maxw < 5)
+    return;
+  t = g_strdup_printf(" %s ", title);
+  tl = from_utf8(t);
+  wattrset(frameWnd, named_style_attr("title", COLOR_GENERAL));
+  mvwaddnstr(frameWnd, y, x, tl ? tl : t, maxw);
+  g_free(t);
+  g_free(tl);
+}
+
+//  draw_frames()
+// Draw the frames around the windows (see layout_borders()).
+static void draw_frames(void)
+{
+  const frame_chars_t *fc = frame_chars();
+  const ui_layout_t *l = &Layout;
+  int y, x;
+  // Rows of the line between the roster and the chat column
+  int vtop = l->roster.y, vbot = l->roster.y + l->roster.h - 1;
+  // Rows of the line between the chat window and the members column
+  gboolean msep = members_shown && members_mode() == MEMBERS_COLUMN &&
+                  l->frame_msep >= 0;
+  int mtop = l->chat.y, mbot = l->chat.y + l->chat.h - 1;
+
+  werase(frameWnd);
+  if (!fc || !l->borders)
+    return;
+
+  wattrset(frameWnd, named_style_attr("border", COLOR_GENERAL));
+
+  for (y = l->frame_top; y <= l->frame_bottom; y++) {
+    const char *left, *right;
+    if (y == l->frame_top) {
+      left = fc->tl; right = fc->tr;
+    } else if (y == l->frame_bottom) {
+      left = fc->bl; right = fc->br;
+    } else if (y == l->frame_mid) {
+      left = fc->lt; right = fc->rt;
+    } else {
+      // Vertical lines
+      mvwaddstr(frameWnd, y, l->frame_left, fc->v);
+      mvwaddstr(frameWnd, y, l->frame_right, fc->v);
+      if (l->frame_vsep >= 0 && y >= vtop && y <= vbot)
+        mvwaddstr(frameWnd, y, l->frame_vsep, fc->v);
+      if (msep && y >= mtop && y <= mbot)
+        mvwaddstr(frameWnd, y, l->frame_msep, fc->v);
+      if (y == l->frame_isep) {
+        // Line between the chat window and the input line
+        int x0 = l->input.x - 1, x1 = l->input.x + l->input.w;
+        mvwaddstr(frameWnd, y, x0, fc->lt);
+        for (x = x0 + 1; x < x1; x++)
+          waddstr(frameWnd, fc->h);
+        waddstr(frameWnd, fc->rt);
+        if (msep)
+          mvwaddstr(frameWnd, y, l->frame_msep, fc->bt);
+      }
+      continue;
+    }
+    mvwaddstr(frameWnd, y, l->frame_left, left);
+    for (x = l->frame_left + 1; x < l->frame_right; x++)
+      waddstr(frameWnd, fc->h);
+    waddstr(frameWnd, right);
+    // Junctions with the vertical lines
+    if (l->frame_vsep >= 0) {
+      if (y == vtop - 1)
+        mvwaddstr(frameWnd, y, l->frame_vsep, fc->tt);
+      else if (y == vbot + 1)
+        mvwaddstr(frameWnd, y, l->frame_vsep, fc->bt);
+    }
+    if (msep) {
+      if (y == mtop - 1)
+        mvwaddstr(frameWnd, y, l->frame_msep, fc->tt);
+      else if (y == mbot + 1)
+        mvwaddstr(frameWnd, y, l->frame_msep, fc->bt);
+    }
+  }
+
+  // Titles
+  if (l->roster.w > 6)
+    draw_title(l->roster.y - 1, l->roster.x + 1, l->roster.w - 2,
+               "ui_title_roster", "Roster");
+  if (msep && l->members.w > 6)
+    draw_title(l->members.y - 1, l->members.x + 1, l->members.w - 2,
+               "ui_title_members", "Members");
+  if (l->log.h > 0)
+    draw_title(l->log.y - 1, l->log.x + 1, l->log.w - 2,
+               "ui_title_log", "Log");
 }
 
 //  scr_draw_main_window()
@@ -1677,8 +2240,7 @@ void scr_draw_main_window(unsigned int fullinit)
 {
   int requested_size;
   gchar *ver, *message;
-  int chat_y_pos, chatstatus_y_pos, log_y_pos;
-  int roster_x_pos, chat_x_pos;
+  layout_opts_t lopts;
 
   if (maxY < 4)
     maxY = 4;
@@ -1687,63 +2249,58 @@ void scr_draw_main_window(unsigned int fullinit)
     requested_size = DEFAULT_LOG_WIN_HEIGHT;
   else
     requested_size = settings_opt_get_int("log_win_height");
-  if (requested_size <= 0) {
-    Log_Win_Height = 0;
-  } else {
-    if (maxY >= requested_size + 4)
-      Log_Win_Height = requested_size;
-    else {
-      Log_Win_Height = maxY - 4;
-    }
-  }
+  lopts.log_height = MAX(requested_size, 0);
 
   if (roster_hidden) {
-    Roster_Width = 0;
+    lopts.roster_width = 0;
   } else {
     requested_size = settings_opt_get_int("roster_width");
     if (requested_size > 1)
-      Roster_Width = requested_size;
+      lopts.roster_width = requested_size;
     else if (requested_size == 1)
-      Roster_Width = 2;
+      lopts.roster_width = 2;
     else
-      Roster_Width = DEFAULT_ROSTER_WIDTH;
+      lopts.roster_width = DEFAULT_ROSTER_WIDTH;
   }
 
   log_win_on_top = (settings_opt_get_int("log_win_on_top") == 1);
   roster_win_on_right = (settings_opt_get_int("roster_win_on_right") == 1);
 
-  if (log_win_on_top) {
-    log_y_pos = 0;
-    chatstatus_y_pos = Log_Win_Height;
-    chat_y_pos = Log_Win_Height + 1;
-  } else {
-    chat_y_pos = 0;
-    chatstatus_y_pos = CHAT_WIN_HEIGHT;
-    log_y_pos = CHAT_WIN_HEIGHT + 1;
+  lopts.lines = maxY;
+  lopts.cols = maxX;
+  lopts.log_on_top = log_win_on_top;
+  lopts.roster_on_right = roster_win_on_right;
+  lopts.input_height = Input_Win_Height;
+  lopts.borders = (frame_chars() != NULL);
+  {
+    const char *pos = settings_opt_get("input_position");
+    lopts.input_in_chat = !(pos && !strcmp(pos, "bottom"));
   }
+  lopts.members_width = (members_mode() == MEMBERS_COLUMN && !members_hidden) ?
+                        members_width() : 0;
+  lopts.members_on_left = settings_opt_get_int("muc_members_left") == 1;
+  layout_compute(&lopts, &Layout);
+  Log_Win_Height = Layout.log.h;
+  Roster_Width = Layout.roster.w;
 
-  if (roster_win_on_right) {
-    roster_x_pos = maxX - Roster_Width;
-    chat_x_pos = 0;
-  } else {
-    roster_x_pos = 0;
-    chat_x_pos = Roster_Width;
-  }
+#define NEWWIN(r) newwin((r).h, (r).w, (r).y, (r).x)
+#define MOVEWIN(win, r) do { wresize((win), MAX((r).h, 1), MAX((r).w, 1)); \
+                             mvwin((win), (r).y, (r).x); } while (0)
 
   if (fullinit) {
     if (!winbufhash)
       winbufhash = g_hash_table_new_full(g_str_hash, g_str_equal,
-                                         g_free, g_free);
+                                         g_free, winbuf_free);
     /* Create windows */
-    rosterWnd = newwin(CHAT_WIN_HEIGHT, Roster_Width, chat_y_pos, roster_x_pos);
-    chatWnd   = newwin(CHAT_WIN_HEIGHT, maxX - Roster_Width, chat_y_pos,
-                       chat_x_pos);
-    activechatWnd = newwin(CHAT_WIN_HEIGHT, maxX - Roster_Width, chat_y_pos,
-                           chat_x_pos);
-    logWnd    = newwin(Log_Win_Height, maxX, log_y_pos, 0);
-    chatstatusWnd = newwin(1, maxX, chatstatus_y_pos, 0);
-    mainstatusWnd = newwin(1, maxX, maxY-2, 0);
-    inputWnd  = newwin(1, maxX, maxY-1, 0);
+    frameWnd  = newwin(maxY, maxX, 0, 0);
+    membersWnd = newwin(1, 1, 0, 0);
+    rosterWnd = NEWWIN(Layout.roster);
+    chatWnd   = NEWWIN(chat_rect(FALSE));
+    activechatWnd = NEWWIN(Layout.chat);
+    logWnd    = NEWWIN(Layout.log);
+    chatstatusWnd = NEWWIN(Layout.chatstatus);
+    mainstatusWnd = NEWWIN(Layout.mainstatus);
+    inputWnd  = NEWWIN(Layout.input);
     if (!rosterWnd || !chatWnd || !logWnd || !inputWnd) {
       scr_terminate_curses();
       fprintf(stderr, "Cannot create windows!\n");
@@ -1757,23 +2314,13 @@ void scr_draw_main_window(unsigned int fullinit)
     wbkgd(mainstatusWnd,  get_color(COLOR_STATUS));
   } else {
     /* Resize/move windows */
-    wresize(rosterWnd, CHAT_WIN_HEIGHT, Roster_Width);
-    wresize(chatWnd, CHAT_WIN_HEIGHT, maxX - Roster_Width);
-    wresize(logWnd, Log_Win_Height, maxX);
-
-    mvwin(chatWnd, chat_y_pos, chat_x_pos);
-    mvwin(rosterWnd, chat_y_pos, roster_x_pos);
-    mvwin(logWnd, log_y_pos, 0);
-
-    // Resize & move chat status window
-    wresize(chatstatusWnd, 1, maxX);
-    mvwin(chatstatusWnd, chatstatus_y_pos, 0);
-    // Resize & move main status window
-    wresize(mainstatusWnd, 1, maxX);
-    mvwin(mainstatusWnd, maxY-2, 0);
-    // Resize & move input line window
-    wresize(inputWnd, 1, maxX);
-    mvwin(inputWnd, maxY-1, 0);
+    MOVEWIN(rosterWnd, Layout.roster);
+    MOVEWIN(chatWnd, chat_rect(FALSE));
+    MOVEWIN(logWnd, Layout.log);
+    MOVEWIN(chatstatusWnd, Layout.chatstatus);
+    MOVEWIN(mainstatusWnd, Layout.mainstatus);
+    MOVEWIN(inputWnd, Layout.input);
+    wresize(frameWnd, maxY, maxX);
 
     werase(chatWnd);
   }
@@ -1781,9 +2328,9 @@ void scr_draw_main_window(unsigned int fullinit)
   /* Draw/init windows */
 
   ver = mcabber_version();
-  message = g_strdup_printf("MCabber version %s.\n", ver);
+  message = g_strdup_printf("mcabber-ng version %s.\n", ver);
   mvwprintw(chatWnd, 0, 0, "%s", message);
-  mvwprintw(chatWnd, 1, 0, "https://mcabber.com/");
+  mvwprintw(chatWnd, 1, 0, "https://github.com/h5vx/mcabber-ng");
   g_free(ver);
   g_free(message);
 
@@ -1801,6 +2348,9 @@ void scr_draw_main_window(unsigned int fullinit)
 #endif
 
     // Create panels
+    framePanel  = new_panel(frameWnd);
+    membersPanel = new_panel(membersWnd);
+    hide_panel(membersPanel);
     rosterPanel = new_panel(rosterWnd);
     chatPanel   = new_panel(chatWnd);
     activechatPanel = new_panel(activechatWnd);
@@ -1815,7 +2365,7 @@ void scr_draw_main_window(unsigned int fullinit)
 
     // Init prev_chatwidth; this variable will be used to prevent us
     // from rewrapping buffers when the width doesn't change.
-    prev_chatwidth = maxX - Roster_Width - scr_getprefixwidth();
+    prev_chatwidth = Layout.chat.w;
     // Wrap existing status buffer lines
     hbuf_rebuild(&statushbuf, prev_chatwidth);
 
@@ -1826,6 +2376,7 @@ void scr_draw_main_window(unsigned int fullinit)
 #endif
   } else {
     // Update panels
+    replace_panel(framePanel, frameWnd);
     replace_panel(rosterPanel, rosterWnd);
     replace_panel(chatPanel, chatWnd);
     replace_panel(logPanel, logWnd);
@@ -1840,6 +2391,18 @@ void scr_draw_main_window(unsigned int fullinit)
     show_panel(logPanel);
   }
 
+  // Frames are behind everything
+  place_chatstatus();
+  if (Layout.borders) {
+    draw_frames();
+    show_panel(framePanel);
+    bottom_panel(framePanel);
+    wbkgd(chatstatusWnd, named_style_attr("title_active", COLOR_STATUS));
+  } else {
+    hide_panel(framePanel);
+    wbkgd(chatstatusWnd, get_color(COLOR_STATUS));
+  }
+
   // We'll need to redraw the roster
   scr_update_roster();
   return;
@@ -1849,35 +2412,16 @@ static void resize_win_buffer(gpointer key, gpointer value, gpointer data)
 {
   winbuf_t *wbp = value;
   struct dimensions *dim = data;
-  int chat_x_pos, chat_y_pos;
   int new_chatwidth;
 
   if (!(wbp && wbp->win))
     return;
 
-  if (log_win_on_top)
-    chat_y_pos = Log_Win_Height + 1;
-  else
-    chat_y_pos = 0;
-
-  if (roster_win_on_right)
-    chat_x_pos = 0;
-  else
-    chat_x_pos = Roster_Width;
-
-  // Resize/move buddy window
-  wresize(wbp->win, dim->l, dim->c);
-  mvwin(wbp->win, chat_y_pos, chat_x_pos);
-  werase(wbp->win);
-  // If a panel exists, replace the old window with the new
-  if (wbp->panel)
-    replace_panel(wbp->panel, wbp->win);
-  // Redo line wrapping
-  wbp->bd->top = hbuf_previous_persistent(wbp->bd->top);
-
-  new_chatwidth = maxX - Roster_Width - scr_getprefixwidth();
-  if (new_chatwidth != prev_chatwidth)
-    hbuf_rebuild(&wbp->bd->hbuf, new_chatwidth);
+  // The window is placed when the buffer is displayed (it is shared by
+  // all buffers); the lines are wrapped again if needed.
+  (void)dim;
+  (void)new_chatwidth;
+  sync_buffer_width(wbp);
 }
 
 //  scr_resize()
@@ -1893,16 +2437,13 @@ void scr_resize(void)
   // scr_draw_main_window() will take care of maxY and Log_Win_Height
 
   // Make sure the cursor stays inside the window
-  check_offset(0);
 
   // Resize windows and update panels
   scr_draw_main_window(FALSE);
 
   // Resize all buddy windows
-  dim.l = CHAT_WIN_HEIGHT;
-  dim.c = maxX - Roster_Width;
-  if (dim.c < 1)
-    dim.c = 1;
+  dim.l = MAX(Layout.chat.h, 1);
+  dim.c = MAX(Layout.chat.w, 1);
 
   // Resize all buffers
   g_hash_table_foreach(winbufhash, resize_win_buffer, &dim);
@@ -1912,7 +2453,7 @@ void scr_resize(void)
     resize_win_buffer(NULL, statusWindow, &dim);
 
   // Update prev_chatwidth, now that all buffers have been resized
-  prev_chatwidth = maxX - Roster_Width - scr_getprefixwidth();
+  prev_chatwidth = Layout.chat.w;
 
   // Refresh current buddy window
   if (chatmode)
@@ -1932,6 +2473,123 @@ void sigwinch_resize(void)
 //  scr_update_chat_status(forceupdate)
 // Redraw the buddy status bar.
 // Set forceupdate to TRUE if update_panels() must be called.
+/* -- Status lines formats (mc.format.chat_status, mc.format.main_status) -- */
+
+typedef struct {
+  gpointer bud;
+  guint btype;
+  char status;
+  const char *status_name;
+  const char *resource;
+  gchar *msg;
+  const char *chatstate;
+  gboolean locked;
+} chat_status_t;
+
+static const char *const chat_status_fields[] = {
+  "name", "jid", "resource", "type", "type_name", "status", "status_char",
+  "icon", "msg", "chatstate", "chatmode", "locked", "unread", NULL
+};
+
+static gchar *chat_status_field(const char *name, const char *arg,
+                                gpointer data)
+{
+  chat_status_t *cs = data;
+  guint t = cs->btype;
+
+  if (!strcmp(name, "name"))
+    return g_strdup(buddy_getname(cs->bud));
+  if (!strcmp(name, "jid"))
+    return g_strdup(buddy_getjid(cs->bud));
+  if (!strcmp(name, "resource"))
+    return g_strdup(cs->resource);
+  if (!strcmp(name, "type"))
+    return g_strdup((t & ROSTER_TYPE_USER) ? "user" :
+                    (t & ROSTER_TYPE_ROOM) ? "room" :
+                    (t & ROSTER_TYPE_AGENT) ? "agent" :
+                    (t & ROSTER_TYPE_GROUP) ? "group" : "special");
+  if (!strcmp(name, "type_name"))
+    return g_strdup((t & ROSTER_TYPE_USER) ? "Buddy" :
+                    (t & ROSTER_TYPE_ROOM) ? "Room" :
+                    (t & ROSTER_TYPE_AGENT) ? "Agent" :
+                    (t & ROSTER_TYPE_GROUP) ? "Group" : "Special buffer");
+  if (!strcmp(name, "status"))
+    return g_strdup(cs->status_name);
+  if (!strcmp(name, "status_char"))
+    return cs->status ? g_strdup_printf("%c", cs->status) : NULL;
+  if (!strcmp(name, "icon"))
+    return cs->status_name ? status_icon(cs->status_name, cs->status) : NULL;
+  if (!strcmp(name, "msg"))
+    return g_strdup(cs->msg);
+  if (!strcmp(name, "chatstate"))
+    return g_strdup(cs->chatstate);
+  if (!strcmp(name, "chatmode"))
+    return chatmode ? g_strdup("1") : NULL;
+  if (!strcmp(name, "locked"))
+    return cs->locked ? g_strdup("1") : NULL;
+  if (!strcmp(name, "unread"))
+    return (buddy_getflags(cs->bud) & ROSTER_FLAG_MSG) ? g_strdup("1") : NULL;
+  return NULL;
+}
+
+//  chat_status_format()
+// Draw the chat status line with mc.format.chat_status.  Returns FALSE if
+// it is not set.
+static gboolean chat_status_format(void)
+{
+  chat_status_t cs;
+  sstr_t *line;
+  gboolean done;
+  guint ev;
+
+  if (!msgfmt_ui_has("chat_status"))
+    return FALSE;
+
+  memset(&cs, 0, sizeof(cs));
+  cs.bud = BUDDATA(current_buddy);
+  cs.btype = buddy_gettype(cs.bud);
+  if (cs.btype & (ROSTER_TYPE_USER|ROSTER_TYPE_AGENT)) {
+    enum imstatus st;
+    cs.resource = buddy_getactiveresource(cs.bud);
+    st = buddy_getstatus(cs.bud, cs.resource);
+    cs.status = (xmpp_getstatus() != offline && st < imstatus_size) ?
+                imstatus2char[st] : '?';
+    cs.status_name = (xmpp_getstatus() != offline) ? mlua_status_name(st) :
+                     "unknown";
+    cs.msg = g_strdup(buddy_getstatusmsg(cs.bud, cs.resource));
+    ev = buddy_resource_getevents(cs.bud, cs.resource);
+    cs.chatstate = (ev == ROSTER_EVENT_ACTIVE) ? "active" :
+                   (ev == ROSTER_EVENT_COMPOSING) ? "composing" :
+                   (ev == ROSTER_EVENT_PAUSED) ? "paused" :
+                   (ev == ROSTER_EVENT_INACTIVE) ? "inactive" :
+                   (ev == ROSTER_EVENT_GONE) ? "gone" : NULL;
+  } else if (cs.btype & ROSTER_TYPE_ROOM) {
+    gboolean inside = buddy_getinsideroom(cs.bud) != 0;
+    cs.status = inside ? 'C' : 'x';
+    cs.status_name = inside ? "room" : "room_out";
+    cs.msg = g_strdup(buddy_gettopic(cs.bud));
+  }
+  if (cs.msg)
+    replace_nl_with_dots(cs.msg);
+  if (chatmode && !(cs.btype & ROSTER_TYPE_GROUP)) {
+    winbuf_t *win_entry = scr_search_window(buddy_getjid(cs.bud),
+                                            cs.btype & ROSTER_TYPE_SPECIAL);
+    cs.locked = win_entry && win_entry->bd->lock;
+  }
+
+  line = sstr_new();
+  done = msgfmt_ui("chat_status", NULL, chat_status_fields,
+                   chat_status_field, &cs, getmaxx(chatstatusWnd), line);
+  if (done) {
+    wmove(chatstatusWnd, 0, 0);
+    draw_sstr(chatstatusWnd, line, getbkgd(chatstatusWnd) & A_ATTRIBUTES,
+              FALSE, getmaxx(chatstatusWnd));
+  }
+  sstr_free(line);
+  g_free(cs.msg);
+  return done;
+}
+
 void scr_update_chat_status(int forceupdate)
 {
   unsigned short btype, isgrp, ismuc, isspe;
@@ -1949,11 +2607,32 @@ void scr_update_chat_status(int forceupdate)
 
   // Clear the line
   werase(chatstatusWnd);
+  if (Layout.borders) {
+    wattrset(chatstatusWnd, named_style_attr("border", COLOR_GENERAL));
+    fill_hline(chatstatusWnd, 0, 0, getmaxx(chatstatusWnd));
+    wattrset(chatstatusWnd, A_NORMAL);
+    wmove(chatstatusWnd, 0, 0);
+  }
+
+  if (console_shown) {
+    wattrset(chatstatusWnd, A_BOLD);
+    mvwprintw(chatstatusWnd, 0, 1, " XMPP console ");
+    wattrset(chatstatusWnd, A_NORMAL);
+    if (forceupdate)
+      update_panels();
+    return;
+  }
 
   if (!current_buddy) {
     if (forceupdate) {
       update_panels();
     }
+    return;
+  }
+
+  if (chat_status_format()) {
+    if (forceupdate)
+      update_panels();
     return;
   }
 
@@ -2074,7 +2753,7 @@ void scr_update_chat_status(int forceupdate)
       eventchar = 'G';
 
     if (eventchar)
-      mvwprintw(chatstatusWnd, 0, maxX-3, "[%c]", eventchar);
+      mvwprintw(chatstatusWnd, 0, getmaxx(chatstatusWnd)-3, "[%c]", eventchar);
   }
 
 
@@ -2088,6 +2767,417 @@ void increment_if_buddy_not_filtered(gpointer rosterdata, void *param)
   int *p = param;
   if (buddylist_is_status_filtered(buddy_getstatus(rosterdata, NULL)))
     *p=*p+1;
+}
+
+/* -- Members panel (muc_members option, mc.format.members) -- */
+
+typedef struct {
+  gchar *name;
+  enum imrole role;
+  enum imaffiliation affil;
+  enum imstatus status;
+  gboolean self;
+} member_t;
+
+static int role_rank(enum imrole r)
+{
+  switch (r) {
+    case role_moderator:   return 0;
+    case role_participant: return 1;
+    case role_visitor:     return 2;
+    default:               return 3;
+  }
+}
+
+static gint member_cmp(gconstpointer a, gconstpointer b)
+{
+  const member_t *x = *(member_t * const *)a, *y = *(member_t * const *)b;
+  gchar *kx, *ky;
+  gint r = role_rank(x->role) - role_rank(y->role);
+
+  if (r)
+    return r;
+  kx = g_utf8_casefold(x->name, -1);
+  ky = g_utf8_casefold(y->name, -1);
+  r = g_utf8_collate(kx, ky);
+  g_free(kx);
+  g_free(ky);
+  return r;
+}
+
+static void member_free(gpointer data)
+{
+  member_t *m = data;
+  g_free(m->name);
+  g_free(m);
+}
+
+static char role_char(enum imrole r)
+{
+  return r == role_moderator ? '@' : r == role_participant ? '+' : ' ';
+}
+
+static const char *const member_fields[] = {
+  "name", "role", "role_char", "affil", "status", "icon", "self", NULL
+};
+
+static gchar *member_field(const char *name, const char *arg, gpointer data)
+{
+  member_t *m = data;
+
+  if (!strcmp(name, "name"))
+    return g_strdup(m->name);
+  if (!strcmp(name, "role"))
+    return m->role != role_none ? g_strdup(strrole[m->role]) : NULL;
+  if (!strcmp(name, "role_char"))
+    return g_strdup_printf("%c", role_char(m->role));
+  if (!strcmp(name, "affil"))
+    return m->affil != affil_none ? g_strdup(straffil[m->affil]) : NULL;
+  if (!strcmp(name, "status"))
+    return g_strdup(mlua_status_name(m->status));
+  if (!strcmp(name, "icon"))
+    return status_icon(mlua_status_name(m->status), imstatus2char[m->status]);
+  if (!strcmp(name, "self"))
+    return m->self ? g_strdup("1") : NULL;
+  return NULL;
+}
+
+//  place_chatstatus()
+// With frames, the chat status line is in the frame above the chat window,
+// whose width depends on the members column.
+static void place_chatstatus(void)
+{
+  if (Layout.borders) {
+    rect_t c = chat_rect(members_shown && members_mode() == MEMBERS_COLUMN);
+    rect_t r = { Layout.chatstatus.y, c.x + 1, 1, MAX(c.w - 2, 1) };
+    MOVEWIN(chatstatusWnd, r);
+    replace_panel(chatstatusPanel, chatstatusWnd);
+  }
+}
+
+//  draw_members()
+// Display the members of the current room (if this is a room).
+static void draw_members(void)
+{
+  gboolean show = chatmode && currentWindow && winbuf_is_room(currentWindow) &&
+                  members_mode() != MEMBERS_NONE && !members_hidden;
+  const frame_chars_t *fc = frame_chars();
+  gboolean has_format = msgfmt_ui_has("members");
+  GSList *elt, *res, *p;
+  GPtrArray *list;
+  gpointer bud;
+  const char *mynick;
+  rect_t r;
+  int x0, cw, rows;
+  guint i;
+
+  if (show != members_shown) {
+    members_shown = show;
+    place_chatstatus();
+    if (Layout.borders)
+      draw_frames();
+    scr_update_chat_status(FALSE);
+  }
+  if (!show) {
+    hide_panel(membersPanel);
+    return;
+  }
+
+  elt = roster_find(currentWindow->jid, jidsearch, ROSTER_TYPE_ROOM);
+  bud = elt->data;
+  mynick = buddy_getnickname(bud);
+  list = g_ptr_array_new_with_free_func(member_free);
+  res = buddy_getresources(bud);
+  for (p = res; p; p = g_slist_next(p)) {
+    member_t *m = g_new0(member_t, 1);
+    m->name = p->data;
+    m->role = buddy_getrole(bud, m->name);
+    m->affil = buddy_getaffil(bud, m->name);
+    m->status = buddy_getstatus(bud, m->name);
+    m->self = mynick && !strcmp(mynick, m->name);
+    g_ptr_array_add(list, m);
+  }
+  g_slist_free(res);
+  g_ptr_array_sort(list, member_cmp);
+
+  if (members_mode() == MEMBERS_COLUMN) {
+    r = Layout.members;
+  } else {
+    rect_t c = chat_rect(TRUE);
+    r.w = MIN(members_width(), MAX(c.w / 2, 1));
+    r.h = MIN((int)list->len + 1, c.h);
+    r.y = c.y;
+    r.x = c.x + c.w - r.w;
+  }
+  MOVEWIN(membersWnd, r);
+  replace_panel(membersPanel, membersWnd);
+  werase(membersWnd);
+  wbkgd(membersWnd, get_color(COLOR_ROSTER));
+
+  // Separators
+  x0 = 0;
+  cw = r.w;
+  rows = r.h;
+  wattrset(membersWnd, named_style_attr("border", COLOR_GENERAL));
+  if (members_mode() == MEMBERS_COLUMN) {
+    if (!Layout.borders) {
+      int sx = (Layout.members.x < Layout.chat.x) ? r.w - 1 : 0;
+      for (i = 0; (int)i < r.h; i++)
+        mvwaddch(membersWnd, i, sx, ACS_VLINE);
+      x0 = sx ? 0 : 1;
+      cw--;
+    }
+  } else {
+    // Overlay: line on the left and at the bottom
+    for (i = 0; (int)i < r.h - 1; i++) {
+      if (fc)
+        mvwaddstr(membersWnd, i, 0, fc->v);
+      else
+        mvwaddch(membersWnd, i, 0, ACS_VLINE);
+    }
+    wmove(membersWnd, r.h - 1, 0);
+    if (fc) {
+      waddstr(membersWnd, fc->bl);
+      for (i = 1; (int)i < r.w; i++)
+        waddstr(membersWnd, fc->h);
+    } else {
+      waddch(membersWnd, ACS_LLCORNER);
+      for (i = 1; (int)i < r.w; i++)
+        waddch(membersWnd, ACS_HLINE);
+    }
+    x0 = 1;
+    cw--;
+    rows--;
+  }
+  wattrset(membersWnd, get_color(COLOR_ROSTER));
+
+  for (i = 0; i < list->len && (int)i < rows; i++) {
+    member_t *m = g_ptr_array_index(list, i);
+    sstr_t *line = sstr_new();
+    int base = get_color(COLOR_ROSTER);
+
+    wmove(membersWnd, i, x0);
+    if ((int)i == rows - 1 && list->len > (guint)rows) {
+      // Not enough room
+      gchar *more = g_strdup_printf(" … +%u", list->len - rows + 1);
+      wattrset(membersWnd, named_style_attr("dim", COLOR_ROSTER));
+      waddnstr(membersWnd, more, -1);
+      g_free(more);
+      sstr_free(line);
+      break;
+    }
+    if (has_format &&
+        msgfmt_ui("members", NULL, member_fields, member_field, m, cw, line)) {
+      draw_sstr(membersWnd, line, base, FALSE, cw);
+    } else {
+      // " @nick", the nickname colored like in the chat window
+      int attr = base;
+      gchar *t = g_strdup_printf(" %c", role_char(m->role));
+      sstr_append(line, t, -1, NULL);
+      g_free(t);
+      draw_sstr(membersWnd, line, base, TRUE, cw);
+      sstr_clear(line);
+      if (m->self)
+        attr = named_style_attr("nick_self", COLOR_ROSTER);
+      else
+        nick_color(m->name, HBB_PREFIX_IN, &attr);
+      sstr_append(line, m->name, -1, NULL);
+      draw_sstr(membersWnd, line, attr, TRUE, cw - 2);
+    }
+    sstr_free(line);
+  }
+  wattrset(membersWnd, A_NORMAL);
+  g_ptr_array_free(list, TRUE);
+
+  show_panel(membersPanel);
+  top_panel(membersPanel);
+}
+
+//  scr_members(arg)
+// /members show|hide|toggle
+void scr_members(const char *arg)
+{
+  gboolean hidden = members_hidden;
+
+  if (!arg || !*arg || !strcmp(arg, "toggle"))
+    hidden = !hidden;
+  else if (!strcmp(arg, "show"))
+    hidden = FALSE;
+  else if (!strcmp(arg, "hide"))
+    hidden = TRUE;
+  else {
+    scr_LogPrint(LPRINT_NORMAL, "Usage: /members [show|hide|toggle]");
+    return;
+  }
+  if (hidden == members_hidden)
+    return;
+  members_hidden = hidden;
+  scr_resize();
+  draw_members();
+  update_panels();
+}
+
+/* -- XMPP console -- */
+
+static void console_create(void)
+{
+  if (consoleWindow)
+    return;
+  consoleWindow = g_new0(winbuf_t, 1);
+  consoleWindow->win = activechatWnd;
+  consoleWindow->panel = activechatPanel;
+  consoleWindow->bd = g_new0(buffdata_t, 1);
+}
+
+//  scr_console_add(outgoing, data)
+// Add XML data sent to or received from the server to the console.
+void scr_console_add(gboolean outgoing, const char *data)
+{
+  gchar **parts, **p;
+  buffdata_t *bd;
+  guint flags = outgoing ? (HBB_PREFIX_OUT | HBB_PREFIX_HLIGHT_OUT)
+                         : HBB_PREFIX_IN;
+  time_t now = time(NULL);
+
+  if (!Curses || !activechatWnd)
+    return;
+  console_create();
+  bd = consoleWindow->bd;
+  parts = xml_split_stanzas(data);
+  for (p = parts; *p; p++) {
+    gchar *masked = xml_mask_secrets(*p);
+    gchar *locale = from_utf8(masked);
+    // At most 64 blocks of history (unless the buffer is scrolled)
+    hbuf_add_line(&bd->hbuf, locale ? locale : masked, NULL, now, flags,
+                  sync_buffer_width(consoleWindow),
+                  (bd->lock || bd->top) ? 0 : 64, NULL);
+    g_free(locale);
+    g_free(masked);
+  }
+  g_strfreev(parts);
+  if (console_shown)
+    scr_update_window(consoleWindow);
+}
+
+//  scr_console_shown()
+// TRUE if the XMPP console is displayed: text typed in the input line is
+// sent to the server.
+gboolean scr_console_shown(void)
+{
+  return console_shown;
+}
+
+static void console_show(void)
+{
+  console_create();
+  console_shown = TRUE;
+  console_buddy = current_buddy;
+  chatmode = TRUE;
+  currentWindow = consoleWindow;
+  top_panel(consoleWindow->panel);
+  hide_panel(chatPanel);
+  scr_update_window(consoleWindow);
+  draw_members();
+  scr_update_chat_status(FALSE);
+  top_panel(inputPanel);
+  update_panels();
+}
+
+//  scr_console(arg)
+// /console [show|hide|toggle|clear]
+void scr_console(const char *arg)
+{
+  if (!Curses)
+    return;
+  if (!arg || !*arg || !strcmp(arg, "toggle")) {
+    arg = console_shown ? "hide" : "show";
+  }
+  if (!strcmp(arg, "show")) {
+    console_show();
+  } else if (!strcmp(arg, "hide")) {
+    if (!console_shown)
+      return;
+    console_shown = FALSE;
+    if (current_buddy)
+      scr_show_buddy_window();
+    else
+      readline_disable_chat_mode(FALSE);
+  } else if (!strcmp(arg, "clear")) {
+    if (consoleWindow) {
+      hbuf_free(&consoleWindow->bd->hbuf);
+      consoleWindow->bd->top = NULL;
+      if (console_shown)
+        scr_update_window(consoleWindow);
+    }
+  } else {
+    scr_LogPrint(LPRINT_NORMAL, "Usage: /console [show|hide|toggle|clear]");
+  }
+}
+
+/* -- Roster format (mc.format.roster) -- */
+
+typedef struct {
+  gpointer bud;
+  guint btype;
+  char status;              // Status character
+  const char *status_name;
+  gunichar pending;
+  guint unread;
+  int count;                // Members of a folded group
+  gboolean selected, folded, msg, composing, paused;
+} roster_item_t;
+
+static const char *const roster_fields[] = {
+  "name", "jid", "status", "status_char", "icon", "pending", "unread",
+  "count", "type", "selected", "folded", "msg", "composing", "paused",
+  "sub_from", "sub_to", NULL
+};
+
+static gchar *roster_field(const char *name, const char *arg, gpointer data)
+{
+  roster_item_t *it = data;
+
+  if (!strcmp(name, "name"))
+    return g_strdup(buddy_getname(it->bud));
+  if (!strcmp(name, "jid"))
+    return g_strdup(buddy_getjid(it->bud));
+  if (!strcmp(name, "status"))
+    return g_strdup(it->status_name);
+  if (!strcmp(name, "status_char"))
+    return g_strdup_printf("%c", it->status);
+  if (!strcmp(name, "icon"))
+    return it->status_name ? status_icon(it->status_name, it->status) : NULL;
+  if (!strcmp(name, "pending")) {
+    gchar buf[8] = { 0 };
+    if (it->pending == ' ')
+      return NULL;
+    g_unichar_to_utf8(it->pending, buf);
+    return g_strdup(buf);
+  }
+  if (!strcmp(name, "unread"))
+    return it->unread ? g_strdup_printf("%u", it->unread) : NULL;
+  if (!strcmp(name, "count"))
+    return it->folded ? g_strdup_printf("%d", it->count) : NULL;
+  if (!strcmp(name, "type")) {
+    if (it->btype & ROSTER_TYPE_GROUP)   return g_strdup("group");
+    if (it->btype & ROSTER_TYPE_ROOM)    return g_strdup("room");
+    if (it->btype & ROSTER_TYPE_AGENT)   return g_strdup("agent");
+    if (it->btype & ROSTER_TYPE_SPECIAL) return g_strdup("special");
+    return g_strdup("user");
+  }
+  if (!strcmp(name, "sub_from") || !strcmp(name, "sub_to")) {
+    guint sub;
+    if (!(it->btype & ROSTER_TYPE_USER))
+      return NULL;
+    sub = buddy_getsubscription(it->bud);
+    return (sub & (name[4] == 'f' ? sub_from : sub_to)) ? g_strdup("1") : NULL;
+  }
+  if (!strcmp(name, "selected"))  return it->selected ? g_strdup("1") : NULL;
+  if (!strcmp(name, "folded"))    return it->folded ? g_strdup("1") : NULL;
+  if (!strcmp(name, "msg"))       return it->msg ? g_strdup("1") : NULL;
+  if (!strcmp(name, "composing")) return it->composing ? g_strdup("1") : NULL;
+  if (!strcmp(name, "paused"))    return it->paused ? g_strdup("1") : NULL;
+  return NULL;
 }
 
 //  scr_draw_roster()
@@ -2106,6 +3196,7 @@ void scr_draw_roster(void)
   int x_pos;
   int prefix_length;
   char space[2] = " ";
+  gboolean roster_format = msgfmt_ui_has("roster");
 
   // We can reset update_roster
   if (_update_roster == FALSE)
@@ -2115,7 +3206,8 @@ void scr_draw_roster(void)
   buddylist_build();
 
   getmaxyx(rosterWnd, maxy, maxx);
-  maxx--;  // Last char is for vertical border
+  if (!Layout.borders)
+    maxx--;  // Last char is for vertical border
 
   cursor_backup = curs_set(0);
 
@@ -2128,15 +3220,16 @@ void scr_draw_roster(void)
   wbkgdset(rosterWnd, get_color(COLOR_GENERAL)); // clear background color
   werase(rosterWnd);
 
-  if (Roster_Width) {
+  if (Roster_Width && !Layout.borders) {
     int line_x_pos = roster_win_on_right ? 0 : Roster_Width-1;
     // Redraw the vertical line (not very good...)
-    for (i=0 ; i < CHAT_WIN_HEIGHT ; i++)
+    for (i=0 ; i < Layout.roster.h ; i++)
       mvwaddch(rosterWnd, i, line_x_pos, ACS_VLINE);
   }
 
   // Leave now if buddylist is empty or the roster is hidden
   if (!buddylist || !Roster_Width) {
+    draw_members();
     update_panels();
     curs_set(cursor_backup);
     return;
@@ -2161,7 +3254,7 @@ void scr_draw_roster(void)
     offset = i + 1 - maxy;
   }
 
-  if (roster_win_on_right)
+  if (roster_win_on_right && !Layout.borders)
     x_pos = 1; // 1 char offset (vertical line)
   else
     x_pos = 0;
@@ -2288,6 +3381,48 @@ void scr_draw_roster(void)
         pending = attention_sign();
     }
 
+    if (roster_format) {
+      roster_item_t it;
+      sstr_t *line = sstr_new();
+      const char *kind = isgrp ? "group" : isspe ? "special" :
+                         ismuc ? "room" : "contact";
+      gboolean done;
+
+      memset(&it, 0, sizeof(it));
+      it.bud = BUDDATA(buddy);
+      it.btype = btype;
+      it.status = status;
+      if (ismuc) {
+        it.status_name = (status == 'C') ? "room" : "room_out";
+      } else if (!isgrp && !isspe) {
+        enum imstatus st = buddy_getstatus(BUDDATA(buddy), NULL);
+        it.status_name = (currentstatus == offline) ? "unknown" :
+                         mlua_status_name(st);
+      }
+      it.pending = pending;
+      it.unread = buddy_getunread(BUDDATA(buddy));
+      it.selected = (buddy == current_buddy);
+      it.folded = isgrp && ishid;
+      it.msg = ismsg;
+      it.composing = (pending == '+');
+      it.paused = (pending == '.');
+      if (it.folded)
+        foreach_group_member(BUDDATA(buddy), increment_if_buddy_not_filtered,
+                             &it.count);
+
+      done = msgfmt_ui("roster", kind, roster_fields, roster_field, &it,
+                       maxx, line);
+      if (done) {
+        int base = getbkgd(rosterWnd) & A_ATTRIBUTES;
+        wmove(rosterWnd, i, x_pos);
+        draw_sstr(rosterWnd, line, base, it.selected, maxx);
+        sstr_free(line);
+        i++;
+        continue;
+      }
+      sstr_free(line);
+    }
+
     if (isgrp) {
       if (ishid) {
         int group_count = 0;
@@ -2328,6 +3463,7 @@ void scr_draw_roster(void)
   g_free(rline);
   g_free(unread);
   g_free(name);
+  draw_members();
   top_panel(inputPanel);
   update_panels();
   curs_set(cursor_backup);
@@ -2363,8 +3499,8 @@ void scr_roster_visibility(int status)
 }
 
 static void scr_write_message(const char *bjid, const char *text,
-                              time_t timestamp, guint prefix_flags,
-                              unsigned mucnicklen, gpointer xep184)
+                              const char *nick, time_t timestamp,
+                              guint prefix_flags, gpointer xep184)
 {
   char *xtext;
 
@@ -2375,35 +3511,75 @@ static void scr_write_message(const char *bjid, const char *text,
 
   xtext = ut_expand_tabs(text); // Expand tabs and filter out some chars
 
-  scr_write_in_window(bjid, xtext, timestamp, prefix_flags, FALSE, mucnicklen,
+  scr_write_in_window(bjid, xtext, nick, timestamp, prefix_flags, FALSE,
                       xep184);
 
   if (xtext != (char*)text)
     g_free(xtext);
 }
 
+//  scr_write_incoming_message_nick(jidfrom, text, nick, timestamp, prefix)
+// Write an incoming message.  nick is the nickname of the sender, for room
+// messages (HBB_PREFIX_MUC) and actions (HBB_PREFIX_ME).
 // If prefix is NULL, HBB_PREFIX_IN is supposed.
+void scr_write_incoming_message_nick(const char *jidfrom, const char *text,
+                                     const char *nick, time_t timestamp,
+                                     guint prefix)
+{
+  if (!(prefix &
+        ~HBB_PREFIX_NOFLAG & ~HBB_PREFIX_HLIGHT & ~HBB_PREFIX_HLIGHT_OUT &
+        ~HBB_PREFIX_PGPCRYPT & ~HBB_PREFIX_OTRCRYPT & ~HBB_PREFIX_CARBON &
+        ~HBB_PREFIX_ME & ~HBB_PREFIX_MUC & ~HBB_PREFIX_PRIVATE))
+    prefix |= HBB_PREFIX_IN;
+
+  scr_write_message(jidfrom, text, nick, timestamp, prefix, NULL);
+}
+
+// For compatibility: if mucnicklen is not 0, the text begins with
+// "<nick> " (or "*nick " for an action).
 void scr_write_incoming_message(const char *jidfrom, const char *text,
                                 time_t timestamp,
                                 guint prefix, unsigned mucnicklen)
 {
-  if (!(prefix &
-        ~HBB_PREFIX_NOFLAG & ~HBB_PREFIX_HLIGHT & ~HBB_PREFIX_HLIGHT_OUT &
-        ~HBB_PREFIX_PGPCRYPT & ~HBB_PREFIX_OTRCRYPT & ~HBB_PREFIX_CARBON))
-    prefix |= HBB_PREFIX_IN;
+  gchar *nick = NULL;
 
-  scr_write_message(jidfrom, text, timestamp, prefix, mucnicklen, NULL);
+  if (mucnicklen > 2 && strlen(text) >= mucnicklen) {
+    if (text[0] == '<' && text[mucnicklen-1] == '>') {
+      nick = g_strndup(text + 1, mucnicklen - 2);
+      prefix |= HBB_PREFIX_MUC;
+    } else if (text[0] == '*' && text[mucnicklen-1] == ' ') {
+      nick = g_strndup(text + 1, mucnicklen - 2);
+      prefix |= HBB_PREFIX_MUC | HBB_PREFIX_ME;
+    }
+    if (nick) {
+      text += mucnicklen;
+      if (*text == ' ')
+        text++;
+    }
+  }
+  scr_write_incoming_message_nick(jidfrom, text, nick, timestamp, prefix);
+  g_free(nick);
 }
 
 void scr_write_outgoing_message(const char *jidto, const char *text,
                                 guint prefix, gpointer xep184)
 {
+  scr_write_outgoing_message_nick(jidto, text, NULL, prefix, xep184);
+}
+
+//  scr_write_outgoing_message_nick(jidto, text, nick, prefix, xep184)
+// nick is our nickname for actions (HBB_PREFIX_ME), or the recipient for
+// private messages in a room (HBB_PREFIX_PRIVATE).
+void scr_write_outgoing_message_nick(const char *jidto, const char *text,
+                                     const char *nick, guint prefix,
+                                     gpointer xep184)
+{
   GSList *roster_elt;
   roster_elt = roster_find(jidto, jidsearch,
                            ROSTER_TYPE_USER|ROSTER_TYPE_AGENT|ROSTER_TYPE_ROOM);
 
-  scr_write_message(jidto, text,
-                    0, prefix|HBB_PREFIX_OUT|HBB_PREFIX_HLIGHT_OUT, 0, xep184);
+  scr_write_message(jidto, text, nick,
+                    0, prefix|HBB_PREFIX_OUT|HBB_PREFIX_HLIGHT_OUT, xep184);
 
   // Show jidto's buffer unless the buddy is not in the buddylist
   if (roster_elt && g_list_position(buddylist, roster_elt->data) != -1)
@@ -2485,7 +3661,7 @@ static void set_chatstate(int state)
 }
 
 #ifdef XEP0085
-static gboolean scr_chatstates_timeout(void)
+static gboolean scr_chatstates_timeout(gpointer data)
 {
   time_t now;
   time(&now);
@@ -2835,6 +4011,15 @@ void scr_roster_display(const char *filter)
   scr_LogPrint(LPRINT_NORMAL, "Roster status filter: %s", strfilter);
 }
 
+//  buffer_lookup(isspe)
+// The buffer of the current buddy, or the XMPP console if it is displayed.
+static winbuf_t *buffer_lookup(guint isspe)
+{
+  if (console_shown && consoleWindow)
+    return consoleWindow;
+  return scr_search_window(CURRENT_JID, isspe);
+}
+
 //  scr_buffer_scroll_up_down()
 // Scroll up/down the current buddy window,
 // - half a screen if nblines is 0,
@@ -2850,7 +4035,7 @@ void scr_buffer_scroll_up_down(int updown, unsigned int nblines)
   if (!current_buddy) return;
 
   isspe = buddy_gettype(BUDDATA(current_buddy)) & ROSTER_TYPE_SPECIAL;
-  win_entry  = scr_search_window(CURRENT_JID, isspe);
+  win_entry = buffer_lookup(isspe);
   if (!win_entry) return;
 
   if (!nblines) {
@@ -2904,7 +4089,7 @@ void scr_buffer_clear(void)
   // Get win_entry
   if (!current_buddy) return;
   isspe = buddy_gettype(BUDDATA(current_buddy)) & ROSTER_TYPE_SPECIAL;
-  win_entry = scr_search_window(CURRENT_JID, isspe);
+  win_entry = buffer_lookup(isspe);
   if (!win_entry) return;
 
   win_entry->bd->cleared = TRUE;
@@ -3052,7 +4237,7 @@ void scr_buffer_scroll_lock(int lock)
   // Get win_entry
   if (!current_buddy) return;
   isspe = buddy_gettype(BUDDATA(current_buddy)) & ROSTER_TYPE_SPECIAL;
-  win_entry = scr_search_window(CURRENT_JID, isspe);
+  win_entry = buffer_lookup(isspe);
   if (!win_entry) return;
 
   if (lock == -1)
@@ -3097,7 +4282,7 @@ void scr_buffer_readmark(gchar action)
   if (!current_buddy) return;
   isspe = buddy_gettype(BUDDATA(current_buddy)) & ROSTER_TYPE_SPECIAL;
   if (isspe) return; // Maybe not necessary
-  win_entry = scr_search_window(CURRENT_JID, isspe);
+  win_entry = buffer_lookup(isspe);
   if (!win_entry) return;
 
   autolock = settings_opt_get_int("buffer_smart_scrolling");
@@ -3121,7 +4306,7 @@ void scr_buffer_top_bottom(int topbottom)
   // Get win_entry
   if (!current_buddy) return;
   isspe = buddy_gettype(BUDDATA(current_buddy)) & ROSTER_TYPE_SPECIAL;
-  win_entry = scr_search_window(CURRENT_JID, isspe);
+  win_entry = buffer_lookup(isspe);
   if (!win_entry) return;
 
   win_entry->bd->cleared = FALSE;
@@ -3149,7 +4334,7 @@ void scr_buffer_search(int direction, const char *text)
   // Get win_entry
   if (!current_buddy) return;
   isspe = buddy_gettype(BUDDATA(current_buddy)) & ROSTER_TYPE_SPECIAL;
-  win_entry = scr_search_window(CURRENT_JID, isspe);
+  win_entry = buffer_lookup(isspe);
   if (!win_entry) return;
 
   if (win_entry->bd->top)
@@ -3183,7 +4368,7 @@ void scr_buffer_percent(int pc)
   // Get win_entry
   if (!current_buddy) return;
   isspe = buddy_gettype(BUDDATA(current_buddy)) & ROSTER_TYPE_SPECIAL;
-  win_entry = scr_search_window(CURRENT_JID, isspe);
+  win_entry = buffer_lookup(isspe);
   if (!win_entry) return;
 
   if (pc < 0 || pc > 100) {
@@ -3215,7 +4400,7 @@ void scr_buffer_date(time_t t)
   // Get win_entry
   if (!current_buddy) return;
   isspe = buddy_gettype(BUDDATA(current_buddy)) & ROSTER_TYPE_SPECIAL;
-  win_entry = scr_search_window(CURRENT_JID, isspe);
+  win_entry = buffer_lookup(isspe);
   if (!win_entry) return;
 
   search_res = hbuf_jump_date(win_entry->bd->hbuf, t);
@@ -3245,7 +4430,7 @@ void scr_buffer_jump_readmark(void)
   if (!current_buddy) return;
   isspe = buddy_gettype(BUDDATA(current_buddy)) & ROSTER_TYPE_SPECIAL;
   if (isspe) return;
-  win_entry = scr_search_window(CURRENT_JID, isspe);
+  win_entry = buffer_lookup(isspe);
   if (!win_entry) return;
 
   search_res = hbuf_jump_readmark(win_entry->bd->hbuf);
@@ -3605,7 +4790,6 @@ void readline_transpose_chars(void)
     a = get_char(c1);
     b = get_char(c2);
     put_char(put_char(c1, b), a);
-    check_offset(1);
   }
 }
 
@@ -3659,7 +4843,6 @@ void readline_backward_kill_word(void)
   // Modify the line
   ptr_inputline = c;
   _strmove(ptr_inputline, old);
-  check_offset(-1);
 }
 
 //  readline_backward_word()
@@ -3685,7 +4868,6 @@ void readline_backward_word(void)
     } else i++;
   }
 
-  check_offset(-1);
 }
 
 //  readline_forward_word()
@@ -3701,7 +4883,6 @@ void readline_forward_word(void)
     ptr_inputline = next_char(ptr_inputline);
   }
 
-  check_offset(1);
 }
 
 void readline_updowncase_word(int upcase)
@@ -3721,7 +4902,6 @@ void readline_updowncase_word(int upcase)
     ptr_inputline = next_char(ptr_inputline);
   }
 
-  check_offset(1);
 }
 
 void readline_capitalize_word(void)
@@ -3743,7 +4923,6 @@ void readline_capitalize_word(void)
     ptr_inputline = next_char(ptr_inputline);
   }
 
-  check_offset(1);
 }
 
 void readline_backward_char(void)
@@ -3751,7 +4930,6 @@ void readline_backward_char(void)
   if (ptr_inputline == (char*)&inputLine) return;
 
   ptr_inputline = prev_char(ptr_inputline, inputLine);
-  check_offset(-1);
 }
 
 void readline_forward_char(void)
@@ -3759,7 +4937,6 @@ void readline_forward_char(void)
   if (!*ptr_inputline) return;
 
   ptr_inputline = next_char(ptr_inputline);
-  check_offset(1);
 }
 
 //  readline_accept_line(down_history)
@@ -3767,15 +4944,36 @@ void readline_forward_char(void)
 // If down_history is true, load the next history line.
 void readline_accept_line(int down_history)
 {
+  char *end;
+
   scr_check_auto_away(TRUE);
+
+  // Trailing newlines are not part of the message
+  end = inputLine + strlen(inputLine);
+  while (end > inputLine && (end[-1] == '\n' || end[-1] == '\r'))
+    *--end = 0;
+  if (ptr_inputline > end)
+    ptr_inputline = end;
+  if (strchr(inputLine, '\n') && !process_line_allows_newlines(inputLine)) {
+    scr_LogPrint(LPRINT_NORMAL, "This command cannot span several lines.");
+    return;
+  }
+
   last_activity_buddy = current_buddy;
-  process_line(inputLine);
+  if (console_shown && inputLine[0] && inputLine[0] != COMMAND_CHAR) {
+    // XMPP console: send raw XML
+    gchar *xml = g_locale_to_utf8(inputLine, -1, NULL, NULL, NULL);
+    if (xml && !xmpp_send_raw(xml))
+      scr_LogPrint(LPRINT_NORMAL, "You are not connected.");
+    g_free(xml);
+  } else {
+    process_line(inputLine);
+  }
   // Add line to history
   scr_cmdhisto_addline(inputLine);
   // Reset the line
   ptr_inputline = inputLine;
   *ptr_inputline = 0;
-  inputline_offset = 0;
 
   if (down_history) {
     // Use next history line instead of a blank line
@@ -3800,7 +4998,6 @@ void readline_cancel_completion(void)
 {
   scr_cancel_current_completion();
   scr_end_current_completion();
-  check_offset(-1);
 }
 
 void readline_do_completion(gboolean fwd)
@@ -3819,7 +5016,6 @@ void readline_do_completion(gboolean fwd)
     tabstr[i] = '\0';
     scr_insert_text(tabstr);
   }
-  check_offset(0);
 }
 
 void readline_refresh_screen(void)
@@ -3841,12 +5037,14 @@ void readline_disable_chat_mode(guint show_roster)
   }
   currentWindow = NULL;
   chatmode = FALSE;
+  console_shown = FALSE;
   if (current_buddy)
     buddy_setflags(BUDDATA(current_buddy), ROSTER_FLAG_LOCK, FALSE);
   if (show_roster)
     scr_roster_visibility(1);
   scr_update_chat_status(FALSE);
   top_panel(chatPanel);
+  draw_members();
   top_panel(inputPanel);
   update_panels();
 }
@@ -3868,10 +5066,8 @@ void readline_hist_prev(void)
   const char *l = scr_cmdhisto_prev(inputLine, 0);
   if (l) {
     strcpy(inputLine, l);
-    // Set the pointer at the EOL.
-    // We have to move it to BOL first, because we could be too far already.
-    readline_iline_start();
-    readline_iline_end();
+    // Set the pointer at the end of the buffer
+    readline_buffer_end();
   }
 }
 
@@ -3880,10 +5076,8 @@ void readline_hist_next(void)
   const char *l = scr_cmdhisto_next(inputLine, 0);
   if (l) {
     strcpy(inputLine, l);
-    // Set the pointer at the EOL.
-    // We have to move it to BOL first, because we could be too far already.
-    readline_iline_start();
-    readline_iline_end();
+    // Set the pointer at the end of the buffer
+    readline_buffer_end();
   }
 }
 
@@ -3898,7 +5092,6 @@ void readline_backward_kill_char(void)
   c = prev_char(ptr_inputline, inputLine);
   ptr_inputline = c;
   _strmove(ptr_inputline, src);
-  check_offset(-1);
 }
 
 void readline_forward_kill_char(void)
@@ -3909,35 +5102,109 @@ void readline_forward_kill_char(void)
   _strmove(ptr_inputline, next_char(ptr_inputline));
 }
 
+//  line_start(p), line_end(p)
+// Beginning/end of the line (in a multi-line input buffer) containing p.
+static char *line_start(char *p)
+{
+  while (p > inputLine && p[-1] != '\n')
+    p--;
+  return p;
+}
+
+static char *line_end(char *p)
+{
+  while (*p && *p != '\n')
+    p++;
+  return p;
+}
+
 void readline_iline_start(void)
 {
-  ptr_inputline = inputLine;
-  inputline_offset = 0;
+  ptr_inputline = line_start(ptr_inputline);
 }
 
 void readline_iline_end(void)
 {
-  for (; *ptr_inputline; ptr_inputline++) ;
-  check_offset(1);
+  ptr_inputline = line_end(ptr_inputline);
 }
 
+void readline_buffer_start(void)
+{
+  ptr_inputline = inputLine;
+}
+
+void readline_buffer_end(void)
+{
+  ptr_inputline = inputLine + strlen(inputLine);
+}
+
+//  readline_backward_kill_iline()
+// Kill from the beginning of the line to the cursor.  At the beginning of
+// a line, join it with the previous one.
 void readline_backward_kill_iline(void)
 {
-  char *dest = inputLine;
+  char *dest = line_start(ptr_inputline);
 
   if (ptr_inputline == inputLine) return;
 
-  if (*dest == COMMAND_CHAR && ptr_inputline != dest+1)
+  if (dest == ptr_inputline) {
+    // Remove the previous newline
+    dest--;
+  } else if (dest == inputLine && *dest == COMMAND_CHAR &&
+             ptr_inputline != dest+1) {
     dest = next_char(dest);
+  }
 
   _strmove(dest, ptr_inputline);
   ptr_inputline = dest;
-  inputline_offset = 0;
 }
 
+//  readline_forward_kill_iline()
+// Kill from the cursor to the end of the line.  At the end of a line, join
+// it with the next one.
 void readline_forward_kill_iline(void)
 {
-  *ptr_inputline = 0;
+  char *end = line_end(ptr_inputline);
+
+  if (end == ptr_inputline && *end == '\n')
+    end++;
+  _strmove(ptr_inputline, end);
+}
+
+//  readline_insert_newline()
+// Insert a line break (multi-line message).
+void readline_insert_newline(void)
+{
+  scr_insert_text("\n");
+}
+
+//  readline_line_up_or_hist(), readline_line_down_or_hist()
+// Move the cursor to the previous/next row of the input line, or in the
+// history when the cursor is on the first/last row.
+void readline_line_up_or_hist(void)
+{
+  il_layout(inputLine, ptr_inputline - inputLine, input_text_width(),
+            &InputLayout);
+  if (InputLayout.cursor_row == 0) {
+    readline_hist_beginning_search_bwd();
+    return;
+  }
+  ptr_inputline = inputLine + il_offset_at(inputLine, &InputLayout,
+                                           InputLayout.cursor_row - 1,
+                                           InputLayout.cursor_col);
+}
+
+void readline_line_down_or_hist(void)
+{
+  il_layout(inputLine, ptr_inputline - inputLine, input_text_width(),
+            &InputLayout);
+  if (InputLayout.cursor_row + 1 >= InputLayout.rows) {
+    readline_hist_beginning_search_fwd();
+    return;
+  }
+  ptr_inputline = inputLine + il_offset_at(inputLine, &InputLayout,
+                                           InputLayout.cursor_row + 1,
+                                           InputLayout.cursor_col);
 }
 
 void readline_send_multiline(void)
@@ -3952,7 +5219,6 @@ void readline_insert(const char *toinsert)
   if (!toinsert || !*toinsert) return;
 
   scr_insert_text(toinsert);
-  check_offset(0);
 }
 
 //  which_row()
@@ -3972,7 +5238,7 @@ static int which_row(const char **p_row)
   if ((ptr_inputline == inputLine) || (inputLine[0] != COMMAND_CHAR)) {
     if (!current_buddy) return -2;
     if (buddy_gettype(BUDDATA(current_buddy)) == ROSTER_TYPE_ROOM) {
-      *p_row = inputLine;
+      *p_row = line_start(ptr_inputline);
       return -1;
     }
     return -2;
@@ -4143,97 +5409,162 @@ static void scr_end_current_completion(void)
   completion_started = FALSE;
 }
 
-//  check_offset(int direction)
-// Check inputline_offset value, and make sure the cursor is inside the
-// screen.
-static inline void check_offset(int direction)
+/* -- Input prompt (mc.format.input_prompt) -- */
+
+static const char *const prompt_fields[] = {
+  "name", "jid", "type", "chatmode", "command", "multiline", NULL
+};
+
+static gchar *prompt_field(const char *name, const char *arg, gpointer data)
 {
-  int i;
-  char *c = &inputLine[inputline_offset];
-  // Left side
-  if (inputline_offset && direction <= 0) {
-    while (ptr_inputline <= c) {
-      for (i = 0; i < 5; i++)
-        c = prev_char(c, inputLine);
-      if (c == inputLine)
-        break;
-    }
+  gpointer bud = current_buddy ? BUDDATA(current_buddy) : NULL;
+
+  if (!strcmp(name, "name"))
+    return bud ? g_strdup(buddy_getname(bud)) : NULL;
+  if (!strcmp(name, "jid"))
+    return bud ? g_strdup(buddy_getjid(bud)) : NULL;
+  if (!strcmp(name, "type")) {
+    guint t = bud ? buddy_gettype(bud) : 0;
+    return g_strdup((t & ROSTER_TYPE_USER) ? "user" :
+                    (t & ROSTER_TYPE_ROOM) ? "room" :
+                    (t & ROSTER_TYPE_AGENT) ? "agent" :
+                    (t & ROSTER_TYPE_GROUP) ? "group" : "special");
   }
-  // Right side
-  if (direction >= 0) {
-    int delta = get_char_width(c);
-    while (ptr_inputline > c) {
-      c = next_char(c);
-      delta += get_char_width(c);
-    }
-    c = &inputLine[inputline_offset];
-    while (delta >= maxX) {
-      for (i = 0; i < 5; i++) {
-        delta -= get_char_width(c);
-        c = next_char(c);
-      }
-    }
-  }
-  inputline_offset = c - inputLine;
+  if (!strcmp(name, "chatmode"))
+    return chatmode ? g_strdup("1") : NULL;
+  if (!strcmp(name, "command"))
+    return inputLine[0] == COMMAND_CHAR ? g_strdup("1") : NULL;
+  if (!strcmp(name, "multiline"))
+    return multimode ? g_strdup("1") : NULL;
+  return NULL;
 }
 
-#if defined(WITH_ENCHANT) || defined(WITH_ASPELL)
-// prints inputLine with underlined words when misspelled
-static inline void print_checked_line(void)
+//  input_prompt(out)
+// Render the input prompt; returns its width (0 if there is none).  The
+// prompt uses at most a third of the screen.
+static guint input_prompt(sstr_t *out)
 {
-  char *wprint_char_fmt = "%c";
-  int point;
-  int nrchar = maxX;
-  char *ptrCur = inputLine + inputline_offset;
-
-#ifdef UNICODE
-  // We need this to display a single UTF-8 char... Any better solution?
-  if (utf8_mode)
-    wprint_char_fmt = "%lc";
-#endif
-
-  wmove(inputWnd, 0, 0); // problem with backspace
-
-  while (*ptrCur && nrchar-- > 0) {
-    point = ptrCur - inputLine;
-    if (maskLine[point])
-      wattrset(inputWnd, A_UNDERLINE);
-    wprintw(inputWnd, wprint_char_fmt, get_char(ptrCur));
-    wattrset(inputWnd, A_NORMAL);
-    ptrCur = next_char(ptrCur);
-  }
+  if (!msgfmt_ui_has("input_prompt"))
+    return 0;
+  int w = Layout.input.w ? Layout.input.w : maxX;
+  if (!msgfmt_ui("input_prompt", NULL, prompt_fields, prompt_field, NULL,
+                 w / 3, out))
+    return 0;
+  return MIN(out->width, (guint)w / 3);
 }
-#endif
 
-static inline void refresh_inputline(void)
+//  input_text_width()
+// Width available for the text of the input line.
+static guint input_text_width(void)
 {
+  sstr_t *p = sstr_new();
+  guint w = input_prompt(p);
+  int width = Layout.input.w ? Layout.input.w : maxX;
+  sstr_free(p);
+  return width > (int)w + 1 ? width - w : 1;
+}
+
+//  input_max_rows()
+// Maximum height of the input line window.
+static guint input_max_rows(void)
+{
+  const char *v = settings_opt_get("input_max_rows");
+  int n = v ? atoi(v) : 6;
+  return n > 0 ? n : 1;
+}
+
+//  refresh_inputline()
+// Draw the input line.  The window grows (up to input_max_rows lines)
+// when the text needs more rows.
+static void refresh_inputline(void)
+{
+  guint r, visible, height, pw;
+  gboolean spell = FALSE;
+  int width = getmaxx(inputWnd);
+  sstr_t *prompt = sstr_new();
+
+  pw = input_prompt(prompt);
+  il_layout(inputLine, ptr_inputline - inputLine,
+            width > (int)pw + 1 ? width - pw : 1, &InputLayout);
+
+  height = MIN(InputLayout.rows, input_max_rows());
+  if (height != (guint)Input_Win_Height) {
+    Input_Win_Height = height;
+    scr_resize();
+    width = getmaxx(inputWnd);
+  }
+  visible = Layout.input.h;
+
+  // Keep the cursor visible
+  if (InputLayout.cursor_row < input_scroll)
+    input_scroll = InputLayout.cursor_row;
+  else if (InputLayout.cursor_row >= input_scroll + visible)
+    input_scroll = InputLayout.cursor_row - visible + 1;
+  if (input_scroll + visible > InputLayout.rows)
+    input_scroll = InputLayout.rows > visible ? InputLayout.rows - visible : 0;
+
 #if defined(WITH_ENCHANT) || defined(WITH_ASPELL)
   if (settings_opt_get_int("spell_enable") && (chatmode || !vi_mode)) {
     memset(maskLine, 0, INPUTLINE_LENGTH+1);
     spellcheck(inputLine, maskLine);
-  }
-  print_checked_line();
-  wclrtoeol(inputWnd);
-  if (*ptr_inputline) {
-    // hack to set cursor pos. Characters can have different width,
-    // so I know of no better way.
-    char c = *ptr_inputline;
-    *ptr_inputline = 0;
-    print_checked_line();
-    *ptr_inputline = c;
-  }
-#else
-  mvwprintw(inputWnd, 0, 0, "%s", inputLine + inputline_offset);
-  wclrtoeol(inputWnd);
-  if (*ptr_inputline) {
-    // hack to set cursor pos. Characters can have different width,
-    // so I know of no better way.
-    char c = *ptr_inputline;
-    *ptr_inputline = 0;
-    mvwprintw(inputWnd, 0, 0, "%s", inputLine + inputline_offset);
-    *ptr_inputline = c;
+    spell = TRUE;
   }
 #endif
+
+  werase(inputWnd);
+  if (pw && input_scroll == 0) {
+    wmove(inputWnd, 0, 0);
+    draw_sstr(inputWnd, prompt, A_NORMAL, FALSE, pw);
+  }
+  sstr_free(prompt);
+  for (r = 0; r < visible && input_scroll + r < InputLayout.rows; r++) {
+    char *p = inputLine + il_row_start(&InputLayout, input_scroll + r);
+    char *end = inputLine + il_row_end(&InputLayout, input_scroll + r);
+
+    wmove(inputWnd, r, pw);
+    while (p < end) {
+      char *next = next_char(p);
+#if defined(WITH_ENCHANT) || defined(WITH_ASPELL)
+      if (spell && maskLine[p - inputLine])
+        wattrset(inputWnd, A_UNDERLINE);
+#endif
+      if ((unsigned char)*p < ' ')
+        waddch(inputWnd, '?' | A_REVERSE);  // Control character
+      else
+        waddnstr(inputWnd, p, next - p);
+      if (spell)
+        wattrset(inputWnd, A_NORMAL);
+      p = next;
+    }
+  }
+  wmove(inputWnd, InputLayout.cursor_row - input_scroll,
+        MIN((int)(InputLayout.cursor_col + pw), width - 1));
+}
+
+//  scr_get_inputline(), scr_set_inputline(text), scr_insert_inputline(text)
+// Access to the input line (strings in the locale charset).
+const char *scr_get_inputline(void)
+{
+  return inputLine;
+}
+
+void scr_set_inputline(const char *text)
+{
+  if (strlen(text) > INPUTLINE_LENGTH) {
+    scr_LogPrint(LPRINT_NORMAL, "Text too long for the input line.");
+    return;
+  }
+  strcpy(inputLine, text);
+  ptr_inputline = inputLine + strlen(inputLine);
+  if (Curses)
+    refresh_inputline();
+}
+
+void scr_insert_inputline(const char *text)
+{
+  scr_insert_text(text);
+  if (Curses)
+    refresh_inputline();
 }
 
 void scr_handle_CtrlC(void)
@@ -4244,11 +5575,10 @@ void scr_handle_CtrlC(void)
   // Same as Ctrl-g, now
   scr_cancel_current_completion();
   scr_end_current_completion();
-  check_offset(-1);
   refresh_inputline();
 }
 
-static void add_keyseq(char *seqstr, guint mkeycode, gint value)
+static void add_keyseq(char *seqstr, guint mods, gint key)
 {
   keyseq_t *ks;
 
@@ -4260,8 +5590,8 @@ static void add_keyseq(char *seqstr, guint mkeycode, gint value)
 
   ks = g_new0(keyseq_t, 1);
   ks->seqstr = g_strdup(seqstr);
-  ks->mkeycode = mkeycode;
-  ks->value = value;
+  ks->spec.mods = mods;
+  ks->spec.key = key;
   keyseqlist = g_slist_append(keyseqlist, ks);
 }
 
@@ -4270,8 +5600,8 @@ static void add_keyseq(char *seqstr, guint mkeycode, gint value)
 // Return value:
 // -1  if "seq" matches no known sequence
 //  0  if "seq" could match 1 or more known sequences
-// >0  if "seq" matches a key sequence; the mkey code is returned
-//     and *ret is set to the matching keyseq structure.
+//  1  if "seq" matches a key sequence; *ret is set to the matching
+//     keyseq structure.
 static inline gint match_keyseq(int *iseq, keyseq_t **ret)
 {
   GSList *ksl;
@@ -4288,7 +5618,7 @@ static inline gint match_keyseq(int *iseq, keyseq_t **ret)
       c = (unsigned char)*i;
       if (!*p && !c) { // Match
         (*ret) = ksp;
-        return ksp->mkeycode;
+        return 1;
       }
       if (!c) {
         // iseq is too short
@@ -4305,6 +5635,32 @@ static inline gint match_keyseq(int *iseq, keyseq_t **ret)
   if (needmore)
     return 0;
   return -1;
+}
+
+//  match_csi(iseq, len, spec)
+// Generic decoding of "[" params final.
+// Return value: -1 if this isn't a known CSI sequence, 0 if more
+// characters are needed, 1 if spec has been set.
+static gint match_csi(const int *iseq, int len, keyspec_t *spec)
+{
+  char params[MAX_KEYSEQ_LENGTH+1];
+  int i, last;
+
+  if (len < 2 || iseq[0] != '[')
+    return -1;
+  for (i = 1; i < len - 1; i++) {
+    int c = iseq[i];
+    if (!(g_ascii_isdigit(c) || c == ';' || c == ':'))
+      return -1;
+    params[i-1] = c;
+  }
+  params[len-2] = '\0';
+  last = iseq[len-1];
+  if (g_ascii_isdigit(last) || last == ';' || last == ':')
+    return 0;
+  if (last < 0x40 || last > 0x7e)
+    return -1;
+  return key_from_csi(params, last, spec) ? 1 : -1;
 }
 
 static inline int match_utf8_keyseq(int *iseq)
@@ -4376,7 +5732,7 @@ void scr_getch(keycode_t *kcode)
     }
     while (i > 0)
       ungetch(ks[i--]);
-    if (ismeta)
+    if (ismeta && ks[0] != ERR)
       ungetch(ks[0]);
     memset(ks,  0, sizeof(ks));
   }
@@ -4385,20 +5741,27 @@ void scr_getch(keycode_t *kcode)
 
   // Check for escape key sequence
   for (i=0; i < MAX_KEYSEQ_LENGTH; i++) {
-    int match;
+    int match, csi;
+    keyspec_t spec;
     ks[i] = wgetch(inputWnd);
     if (ks[i] == ERR) break;
     match = match_keyseq(ks, &mks);
-    if (match == -1) {
+    if (match > 0) {
+      // We have a matching sequence
+      kcode->mcode = MKEY_SPEC;
+      kcode->spec = mks->spec;
+      return;
+    }
+    csi = match_csi(ks, i+1, &spec);
+    if (csi > 0) {
+      kcode->mcode = MKEY_SPEC;
+      kcode->spec = spec;
+      return;
+    }
+    if (match == -1 && csi == -1) {
       // No such key sequence.  Let's increment i as it is a valid key.
       i++;
       break;
-    }
-    if (match > 0) {
-      // We have a matching sequence
-      kcode->mcode = mks->mkeycode;
-      kcode->value = mks->value;
-      return;
     }
   }
 
@@ -4415,43 +5778,127 @@ void scr_getch(keycode_t *kcode)
   return;
 }
 
+static gboolean format_changed;
+
+//  scr_format_changed()
+// The message formats have changed: the buffers will be rebuilt.
+void scr_format_changed(void)
+{
+  format_changed = TRUE;
+}
+
+static void rebuild_win_buffer(gpointer key, gpointer value, gpointer data)
+{
+  winbuf_t *wbp = value;
+  if (!(wbp && wbp->bd))
+    return;
+  wbp->bd->width = 0;   // Force the rewrapping
+  sync_buffer_width(wbp);
+}
+
 void scr_do_update(void)
 {
-  if (colors_stalled)
+  if (format_changed && Curses) {
+    format_changed = FALSE;
+    g_hash_table_foreach(winbufhash, rebuild_win_buffer, NULL);
+    if (statusWindow)
+      rebuild_win_buffer(NULL, statusWindow, NULL);
+    if (chatmode)
+      scr_show_buddy_window();
+    else
+      update_panels();
+    scr_update_roster();
+    if (current_buddy)
+      scr_update_chat_status(TRUE);
+    else
+      scr_update_main_status(TRUE);
+  }
+  if (colors_stalled && Curses) {
     parse_colors();
+    if (Layout.borders)
+      draw_frames();
+    scr_update_roster();
+    scr_update_main_status(TRUE);
+  }
   doupdate();
+}
+
+//  keycode_to_spec(kcode, spec)
+// Get the key combination for a key read by scr_getch().
+static void keycode_to_spec(const keycode_t *kcode, keyspec_t *spec)
+{
+  memset(spec, 0, sizeof(*spec));
+
+  switch (kcode->mcode) {
+    case MKEY_SPEC:
+        *spec = kcode->spec;
+        return;
+    case MKEY_MOUSE:
+#ifdef NCURSES_MOUSE_VERSION
+        if (kcode->value & BUTTON4_PRESSED)
+          spec->key = KN_WHEELUP;
+# ifdef BUTTON5_PRESSED
+        else if (kcode->value & BUTTON5_PRESSED)
+          spec->key = KN_WHEELDOWN;
+# endif
+        else
+#endif
+        {
+          spec->key = KN_MOUSE;
+          spec->raw = kcode->value;
+        }
+        return;
+    default:
+        break;
+  }
+
+  if (kcode->utf8)
+    spec->key = kcode->value;
+  else if (kcode->value > KEY_MAX)
+    // Extended keys are defined at run time by ncurses
+    (void)(key_from_terminfo_name(keyname(kcode->value), spec) ||
+           key_from_ncurses(kcode->value, spec));
+  else
+    key_from_ncurses(kcode->value, spec);
+
+  if (kcode->mcode == MKEY_META)
+    spec->mods |= KMOD_ALT;
+  key_normalize(spec);
+}
+
+//  scr_keycode_name(kcode)
+// Return the name of the key combination (to be freed by the caller).
+gchar *scr_keycode_name(const keycode_t *kcode)
+{
+  keyspec_t spec;
+  keycode_to_spec(kcode, &spec);
+  return key_format(&spec);
 }
 
 static void bindcommand(keycode_t kcode)
 {
-  gchar asciikey[16], asciicode[16];
+  gchar *keyname;
   const gchar *boundcmd;
 
-  if (kcode.utf8)
-    g_snprintf(asciicode, 15, "U%d", kcode.value);
-  else
-    g_snprintf(asciicode, 15, "%d", kcode.value);
-
-  if (!kcode.mcode || kcode.mcode == MKEY_EQUIV)
-    g_snprintf(asciikey, 15, "%s", asciicode);
-  else if (kcode.mcode == MKEY_META)
-    g_snprintf(asciikey, 15, "M%s", asciicode);
-  else if (kcode.mcode == MKEY_MOUSE)
-    g_snprintf(asciikey, 15, "p%s", asciicode);
-  else
-    g_snprintf(asciikey, 15, "MK%d", kcode.mcode);
-
-  boundcmd = settings_get(SETTINGS_TYPE_BINDING, asciikey);
+  keyname = scr_keycode_name(&kcode);
+  if (mlua_call_binding(keyname)) {
+    scr_check_auto_away(TRUE);
+    g_free(keyname);
+    return;
+  }
+  boundcmd = settings_get(SETTINGS_TYPE_BINDING, keyname);
 
   if (boundcmd) {
     gchar *cmdline = from_utf8(boundcmd);
     scr_check_auto_away(TRUE);
     process_command(cmdline, TRUE);
     g_free(cmdline);
+    g_free(keyname);
     return;
   }
 
-  scr_LogPrint(LPRINT_NORMAL, "Unknown key=%s", asciikey);
+  scr_LogPrint(LPRINT_NORMAL, "Unknown key: %s", keyname);
+  g_free(keyname);
 #ifndef UNICODE
   if (utf8_mode)
     scr_LogPrint(LPRINT_NORMAL,
@@ -4505,6 +5952,263 @@ static void scr_process_vi_arrow_key(int key)
     process_command(mkcmdstr("roster down"), TRUE);
 }
 
+
+/* -- Pasted text -- */
+
+// Maximum size of pasted text we accept
+#define PASTE_MAX_SIZE  (256*1024)
+
+static struct {
+  gboolean active;      // Collecting pasted text
+  gboolean bracketed;   // ... between \e[200~ and \e[201~
+  GString *buf;
+  gint64 last_key;      // Time of the last pasted key (monotonic, us)
+  guint timer;
+  gchar *pending;       // Text waiting for a confirmation ("confirm" mode)
+} paste;
+
+static void paste_commit(void);
+
+static guint paste_option_int(const char *name, guint def)
+{
+  const char *v = settings_opt_get(name);
+  return v ? (guint)MAX(atoi(v), 0) : def;
+}
+
+//  paste_timer_cb()
+// End of a detected paste (no more input), or bracketed paste without end.
+static gboolean paste_timer_cb(gpointer data)
+{
+  gint64 quiet = paste.bracketed ? 500000 :
+                 (gint64)paste_option_int("paste_timeout_ms", 30) * 1000;
+
+  if (!paste.active) {
+    paste.timer = 0;
+    return FALSE;
+  }
+  if (g_get_monotonic_time() - paste.last_key < quiet)
+    return TRUE;    // Wait more
+  paste.timer = 0;
+  paste_commit();
+  scr_do_update();
+  return FALSE;
+}
+
+static void paste_start(gboolean bracketed)
+{
+  if (!paste.buf)
+    paste.buf = g_string_new(NULL);
+  g_string_truncate(paste.buf, 0);
+  paste.active = TRUE;
+  paste.bracketed = bracketed;
+  paste.last_key = g_get_monotonic_time();
+  if (!paste.timer)
+    paste.timer = g_timeout_add(bracketed ? 250 : 10, paste_timer_cb, NULL);
+}
+
+//  paste_add_key(kcode)
+// Add the key to the pasted text.
+static void paste_add_key(const keycode_t *k)
+{
+  paste.last_key = g_get_monotonic_time();
+  if (paste.buf->len >= PASTE_MAX_SIZE)
+    return;
+  if (k->mcode == MKEY_META) {
+    // An Escape character in the text: keep the next character only
+  } else if (k->mcode != MKEY_NONE) {
+    return;   // Escape sequences are dropped
+  }
+  if (k->utf8)
+    g_string_append_unichar(paste.buf, k->value);
+  else if (k->value == 13)
+    g_string_append_c(paste.buf, '\r');
+  else if (k->value == 10 || k->value == 9 ||
+           (k->value >= ' ' && k->value < 256 && k->value != 127))
+    g_string_append_c(paste.buf, k->value);
+}
+
+//  paste_send_lines(text)
+// Old behaviour: each line is sent (or run) like a typed line.
+static void paste_send_lines(const char *text)
+{
+  gchar **lines = g_strsplit(text, "\n", -1);
+  gchar **l;
+
+  for (l = lines; *l; l++) {
+    scr_insert_text(*l);
+    if (*(l+1))
+      readline_accept_line(FALSE);
+  }
+  g_strfreev(lines);
+}
+
+static void paste_insert(const char *text)
+{
+  if (strlen(inputLine) + strlen(text) >= INPUTLINE_LENGTH) {
+    scr_LogPrint(LPRINT_NORMAL, "Pasted text is too long (%u bytes), "
+                 "it has not been inserted.", (unsigned)strlen(text));
+    return;
+  }
+  scr_insert_text(text);
+}
+
+//  paste_commit()
+// End of the pasted text: insert it according to "paste_mode".
+static void paste_commit(void)
+{
+  gchar *text;
+  const char *mode;
+
+  if (!paste.active)
+    return;
+  paste.active = FALSE;
+  if (paste.timer) {
+    g_source_remove(paste.timer);
+    paste.timer = 0;
+  }
+
+  text = paste_normalize(paste.buf->str);
+  g_string_truncate(paste.buf, 0);
+  if (!*text) {
+    g_free(text);
+    return;
+  }
+
+  if (vi_mode && !chatmode && inputLine[0] != COMMAND_CHAR &&
+      inputLine[0] != VI_SEARCH_COMMAND_CHAR) {
+    // Don't run the text as vi commands
+    scr_LogPrint(LPRINT_NORMAL, "Enter chat mode to paste text.");
+    g_free(text);
+    return;
+  }
+
+  mode = settings_opt_get("paste_mode");
+  if (!strchr(text, '\n') || !mode || !strcmp(mode, "insert")) {
+    paste_insert(text);
+  } else if (!strcmp(mode, "send_lines")) {
+    paste_send_lines(text);
+  } else {  // "confirm"
+    if (!strcmp(mode, "confirm")) {
+      scr_LogPrint(LPRINT_NORMAL, "Pasted %u lines (%u bytes): "
+                   "Enter = insert, s = send line by line, Esc = cancel",
+                   paste_count_lines(text), (unsigned)strlen(text));
+      g_free(paste.pending);
+      paste.pending = text;
+      text = NULL;
+    } else {
+      scr_LogPrint(LPRINT_NORMAL, "Invalid paste_mode value: %s", mode);
+      paste_insert(text);
+    }
+  }
+  g_free(text);
+  refresh_inputline();
+}
+
+//  paste_confirm_key(kcode)
+// Answer to the "confirm" question.
+static void paste_confirm_key(const keycode_t *k)
+{
+  gchar *text = paste.pending;
+
+  paste.pending = NULL;
+  if (k->mcode == MKEY_NONE && (k->value == 13 || k->value == 'i' ||
+                                k->value == 'y')) {
+    paste_insert(text);
+  } else if (k->mcode == MKEY_NONE && k->value == 's') {
+    paste_send_lines(text);
+  } else {
+    scr_LogPrint(LPRINT_NORMAL, "Pasted text discarded.");
+  }
+  g_free(text);
+  refresh_inputline();
+}
+
+//  paste_key(kcode)
+// Handle bracketed paste.  Returns TRUE if the key has been consumed.
+static gboolean paste_key(const keycode_t *k)
+{
+  gboolean special = (k->mcode == MKEY_SPEC && !k->spec.mods);
+
+  if (special && k->spec.key == KN_PASTE_START) {
+    if (!paste.active)
+      paste_start(TRUE);
+    return TRUE;
+  }
+  if (special && k->spec.key == KN_PASTE_END) {
+    paste_commit();
+    return TRUE;
+  }
+  if (paste.active) {
+    paste_add_key(k);
+    return TRUE;
+  }
+  if (paste.pending) {
+    paste_confirm_key(k);
+    return TRUE;
+  }
+  return FALSE;
+}
+
+//  burst_is_paste(keys, n)
+// Without bracketed paste, a paste is detected when many keys, including
+// Enter, are read at once: nobody types that fast.
+static gboolean burst_is_paste(const keycode_t *keys, guint n)
+{
+  guint i;
+  const char *opt = settings_opt_get("paste_detect");
+
+  if (opt && !atoi(opt))
+    return FALSE;
+  if (n < paste_option_int("paste_burst_min", 8))
+    return FALSE;
+  for (i = 0; i < n; i++) {
+    if (keys[i].mcode == MKEY_SPEC && keys[i].spec.key == KN_PASTE_START)
+      return FALSE;   // Bracketed paste
+    if (keys[i].mcode == MKEY_NONE && !keys[i].utf8 &&
+        (keys[i].value == 13 || keys[i].value == 10))
+      return TRUE;
+  }
+  return FALSE;
+}
+
+//  scr_process_input()
+// Read and process all the pending keys.
+void scr_process_input(void)
+{
+  static GArray *burst;
+  keycode_t kcode;
+  guint i;
+
+  if (!burst)
+    burst = g_array_new(FALSE, FALSE, sizeof(keycode_t));
+  g_array_set_size(burst, 0);
+
+  for (scr_getch(&kcode); kcode.value != ERR; scr_getch(&kcode)) {
+    g_array_append_val(burst, kcode);
+    if (burst->len >= 65536)
+      break;
+  }
+  if (!burst->len)
+    return;
+
+  // A detected paste goes on as long as keys keep coming quickly
+  if (paste.active && !paste.bracketed) {
+    for (i = 0; i < burst->len; i++)
+      paste_add_key(&g_array_index(burst, keycode_t, i));
+    return;
+  }
+  if (!paste.active && !paste.pending &&
+      burst_is_paste((keycode_t *)burst->data, burst->len)) {
+    paste_start(FALSE);
+    for (i = 0; i < burst->len; i++)
+      paste_add_key(&g_array_index(burst, keycode_t, i));
+    return;
+  }
+
+  for (i = 0; i < burst->len; i++)
+    scr_process_key(g_array_index(burst, keycode_t, i));
+}
+
 //  scr_process_key(key)
 // Handle the pressed key, in the command line (bottom).
 void scr_process_key(keycode_t kcode)
@@ -4514,19 +6218,14 @@ void scr_process_key(keycode_t kcode)
   int vi_search = FALSE;
   static int ex_or_search_mode = FALSE;
 
+  if (paste_key(&kcode))
+    return;
+
   lock_chatstate = FALSE;
 
-  switch (kcode.mcode) {
-    case 0:
-        // key = kcode.value;
-        break;
-    case MKEY_EQUIV:
-        // key = kcode.value;
-        break;
-    case MKEY_META:
-    default:
-        bindcommand(kcode);
-        key = ERR; // Do not process any further
+  if (kcode.mcode) {
+    bindcommand(kcode);
+    key = ERR; // Do not process any further
   }
 
   if (vi_mode && !chatmode) {
@@ -4845,7 +6544,6 @@ display:
       strcpy(tmpLine, ptr_inputline);
       ptr_inputline = put_char(ptr_inputline, key);
       strcpy(ptr_inputline, tmpLine);
-      check_offset(1);
     } else {
       // Look for a key binding.
       if (!kcode.utf8)
@@ -5052,7 +6750,6 @@ static void clear_inputline(void)
 {
   ptr_inputline = inputLine;
   *ptr_inputline = 0;
-  inputline_offset = 0;
 }
 
 /* vim: set et cindent cinoptions=>2\:2(0 ts=2 sw=2:  For Vim users... */

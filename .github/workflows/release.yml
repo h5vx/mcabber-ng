@@ -1,0 +1,115 @@
+# Build packages for several Linux distributions and static binaries for
+# several architectures.  When a "v*" tag is pushed, a GitHub release is
+# created with all the files.  The workflow can also be started manually
+# (the files are then only available as artifacts).
+name: Release
+
+on:
+  push:
+    tags: ['v*']
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  version:
+    runs-on: ubuntu-24.04
+    outputs:
+      version: ${{ steps.version.outputs.version }}
+    steps:
+      - id: version
+        run: |
+          if [ "$GITHUB_REF_TYPE" = tag ]; then
+            version="${GITHUB_REF_NAME#v}"
+          else
+            version="0.0.0-dev.${GITHUB_SHA::7}"
+          fi
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+
+  packages:
+    name: ${{ matrix.dist }} (${{ matrix.arch }})
+    needs: version
+    runs-on: ${{ matrix.arch == 'arm64' && 'ubuntu-24.04-arm' || 'ubuntu-24.04' }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { image: 'debian:12',        family: deb,  dist: debian12,     arch: amd64 }
+          - { image: 'debian:12',        family: deb,  dist: debian12,     arch: arm64 }
+          - { image: 'debian:13',        family: deb,  dist: debian13,     arch: amd64 }
+          - { image: 'debian:13',        family: deb,  dist: debian13,     arch: arm64 }
+          - { image: 'ubuntu:22.04',     family: deb,  dist: ubuntu22.04,  arch: amd64 }
+          - { image: 'ubuntu:22.04',     family: deb,  dist: ubuntu22.04,  arch: arm64 }
+          - { image: 'ubuntu:24.04',     family: deb,  dist: ubuntu24.04,  arch: amd64 }
+          - { image: 'ubuntu:24.04',     family: deb,  dist: ubuntu24.04,  arch: arm64 }
+          - { image: 'fedora:42',        family: rpm,  dist: fedora42,     arch: amd64 }
+          - { image: 'fedora:42',        family: rpm,  dist: fedora42,     arch: arm64 }
+          - { image: 'archlinux:latest', family: arch, dist: archlinux,    arch: amd64 }
+    steps:
+      - uses: actions/checkout@v4
+      - name: Build the package
+        run: |
+          docker run --rm -v "$PWD:/src" -w /src -e OUT=/src/dist \
+            "${{ matrix.image }}" \
+            sh packaging/build-package.sh "${{ matrix.family }}" \
+              "${{ needs.version.outputs.version }}" "${{ matrix.dist }}"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: package-${{ matrix.dist }}-${{ matrix.arch }}
+          path: dist/*
+          if-no-files-found: error
+
+  static:
+    name: static (${{ matrix.arch }})
+    needs: version
+    runs-on: ${{ matrix.runner }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { arch: x86_64,  platform: linux/amd64,  runner: ubuntu-24.04 }
+          - { arch: x86,     platform: linux/386,    runner: ubuntu-24.04 }
+          - { arch: aarch64, platform: linux/arm64,  runner: ubuntu-24.04-arm }
+          - { arch: armv7,   platform: linux/arm/v7, runner: ubuntu-24.04, qemu: true }
+          - { arch: riscv64, platform: linux/riscv64, runner: ubuntu-24.04, qemu: true }
+    steps:
+      - uses: actions/checkout@v4
+      - uses: docker/setup-qemu-action@v3
+        if: matrix.qemu
+      - name: Build the static binary
+        run: |
+          docker run --rm --platform "${{ matrix.platform }}" \
+            -v "$PWD:/src" -w /src -e OUT=/src/dist -e ARCH="${{ matrix.arch }}" \
+            alpine:3.21 \
+            sh packaging/static/build.sh "${{ needs.version.outputs.version }}"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: static-${{ matrix.arch }}
+          path: dist/*
+          if-no-files-found: error
+
+  release:
+    needs: [version, packages, static]
+    if: github.ref_type == 'tag'
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          path: dist
+          merge-multiple: true
+      - name: Checksums
+        run: cd dist && sha256sum * > SHA256SUMS
+      - name: Create the release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          VERSION: ${{ needs.version.outputs.version }}
+        run: |
+          prerelease=
+          case "$VERSION" in *-*) prerelease=--prerelease ;; esac
+          gh release create "$GITHUB_REF_NAME" dist/* \
+            --repo "$GITHUB_REPOSITORY" \
+            --title "mcabber-ng $VERSION" \
+            --generate-notes $prerelease

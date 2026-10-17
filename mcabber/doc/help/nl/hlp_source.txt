@@ -1,4 +1,4 @@
 
- /SOURCE tekst-patroon
+ /SOURCE patroon
 
-Lees configuratie-bestanden in, die voldoen aan het tekst-patroon (gesorteerd op alfabetische volgorde).
+Voert de Lua-bestanden uit die overeenkomen met het patroon (in alfabetische volgorde).

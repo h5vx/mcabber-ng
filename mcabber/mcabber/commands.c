@@ -41,6 +41,7 @@
 #include "utf8.h"
 #include "xmpp.h"
 #include "main.h"
+#include "mlua.h"
 
 #define IMSTATUS_AWAY           "away"
 #define IMSTATUS_ONLINE         "online"
@@ -90,6 +91,8 @@ static void do_color(char *arg);
 static void do_otr(char *arg);
 static void do_otrpolicy(char *arg);
 static void do_echo(char *arg);
+static void do_members(char *arg);
+static void do_console(char *arg);
 static void do_module(char *arg);
 static void do_carbons(char *arg);
 
@@ -204,6 +207,10 @@ void cmd_init(void)
   cmd_add("help", "Display some help", COMPL_CMD, 0, &do_help, NULL);
   cmd_add("iline", "Manipulate input buffer", 0, 0, &do_iline, NULL);
   cmd_add("info", "Show basic info on current buddy", 0, 0, &do_info, NULL);
+  cmd_add("lua", "Run Lua code", 0, 0, &mlua_cmd_lua, NULL);
+  cmd_add("members", "Show or hide the members of the current room", 0, 0,
+          &do_members, NULL);
+  cmd_add("console", "XMPP console (raw XML stream)", 0, 0, &do_console, NULL);
   cmd_add("module", "Manipulations with modules", COMPL_MODULE, 0, &do_module,
           NULL);
   cmd_add("move", "Move the current buddy to another group", COMPL_GROUPNAME,
@@ -228,7 +235,7 @@ void cmd_init(void)
   cmd_add("screen_refresh", "Redraw mcabber screen", 0, 0, &do_screen_refresh,
           NULL);
   cmd_add("set", "Set/query an option value", 0, 0, &do_set, NULL);
-  cmd_add("source", "Read a configuration file", 0, 0, &do_source, NULL);
+  cmd_add("source", "Run a Lua file", 0, 0, &do_source, NULL);
   cmd_add("status", "Show or set your status", COMPL_STATUS, 0, &do_status,
           NULL);
   cmd_add("status_to", "Show or set your status for one recipient",
@@ -525,6 +532,28 @@ void process_command(const char *line, guint iscmd)
   (*curcmd->func)(p);
 #endif
   g_free(xpline);
+}
+
+//  process_line_allows_newlines(line)
+// Return TRUE if the line can contain newlines: messages can, but commands
+// only if they send a message (/say, /say_to, or an alias to them).
+gboolean process_line_allows_newlines(const char *line)
+{
+  char *xpline;
+  cmd *c;
+  gboolean ok;
+
+  if (scr_get_multimode() == 2)   // Verbatim multi-line mode
+    return TRUE;
+  if (*line != COMMAND_CHAR || line[1] == COMMAND_CHAR)
+    return TRUE;
+
+  xpline = expandalias(line);
+  c = cmd_get(xpline);
+  ok = c && (c->func == &do_say || c->func == &do_say_to);
+  if (xpline != line)
+    g_free(xpline);
+  return ok;
 }
 
 //  process_line(line)
@@ -1261,6 +1290,7 @@ static int send_message_to(const char *fjid, const char *msg, const char *subj,
   gint retval = 0;
   int isroom;
   gpointer xep184 = NULL;
+  gchar *lua_msg = NULL, *lua_subj = NULL;
 
   if (!xmpp_is_online()) {
     scr_LogPrint(LPRINT_NORMAL, "You are not connected.");
@@ -1297,6 +1327,37 @@ static int send_message_to(const char *fjid, const char *msg, const char *subj,
     muc_nick = NULL;
   }
 
+  // Lua handlers can drop or modify the message
+  {
+    mlua_event_t *ev = mlua_event_new("message_send");
+    if (ev) {
+      mlua_event_set_str(ev, "jid", fjid);
+      mlua_event_set_str(ev, "bare_jid", bare_jid);
+      mlua_event_set_str(ev, "text", msg);
+      mlua_event_set_str(ev, "subject", subj);
+      mlua_event_set_bool(ev, "muc", isroom);
+      mlua_event_set_bool(ev, "private", muc_nick != NULL);
+      if (mlua_event_emit(ev) == MLUA_DROP) {
+        scr_LogPrint(LPRINT_DEBUG, "Message dropped (Lua handler).");
+        mlua_event_free(ev);
+        g_free(bare_jid);
+        return 1;
+      }
+      lua_msg = mlua_event_get_str(ev, "text");
+      lua_subj = mlua_event_get_str(ev, "subject");
+      mlua_event_free(ev);
+      if (lua_msg)
+        msg = lua_msg;
+      subj = lua_subj;
+      if (!*msg) {
+        g_free(lua_msg);
+        g_free(lua_subj);
+        g_free(bare_jid);
+        return 1;
+      }
+    }
+  }
+
   // local part (UI, logging, etc.)
   if (subj)
     hmsg = g_strdup_printf("[%s]\n%s", subj, msg);
@@ -1314,13 +1375,35 @@ static int send_message_to(const char *fjid, const char *msg, const char *subj,
   }
 
   // Hook
-  if (!isroom)
+  if (!isroom) {
     hk_message_out(bare_jid, muc_nick, 0, hmsg, crypted, FALSE, xep184);
+  } else {
+    // Room messages are displayed when the server sends them back
+    mlua_event_t *ev = mlua_event_new("message_out");
+    mlua_event_set_str(ev, "jid", bare_jid);
+    mlua_event_set_str(ev, "text", hmsg);
+    mlua_event_set_bool(ev, "muc", TRUE);
+    mlua_event_set_bool(ev, "private", FALSE);
+    mlua_event_set_int(ev, "time", time(NULL));
+    mlua_event_set_bool(ev, "carbon", FALSE);
+    mlua_event_emit(ev);
+    mlua_event_free(ev);
+  }
 
 send_message_to_return:
   if (hmsg != msg) g_free(hmsg);
+  g_free(lua_msg);
+  g_free(lua_subj);
   g_free(bare_jid);
   return retval;
+}
+
+//  cmd_send_message(fjid, msg, subj)
+// Send a message (UTF-8) without changing the current window.
+// Returns 0 on success.
+int cmd_send_message(const char *fjid, const char *msg, const char *subj)
+{
+  return send_message_to(fjid, msg, subj, LM_MESSAGE_SUB_TYPE_NOT_SET, TRUE);
 }
 
 //  send_message(msg, subj, type_overwrite)
@@ -2429,43 +2512,124 @@ do_alias_return:
   g_free(alias);
 }
 
-static void dump_bind(char *k, char *v, void *param)
+static void collect_bind(char *k, char *v, void *param)
 {
-  scr_LogPrint(LPRINT_NORMAL, "Key %4s is bound to: %s", k, v);
+  g_ptr_array_add((GPtrArray *)param, k);
+}
+
+static void collect_lua_bind(const char *k, void *param)
+{
+  g_ptr_array_add((GPtrArray *)param, (char *)k);
+}
+
+static gint cmp_str(gconstpointer a, gconstpointer b)
+{
+  return g_utf8_collate(*(const char **)a, *(const char **)b);
+}
+
+static void dump_bindings(void)
+{
+  GPtrArray *keys = g_ptr_array_new();
+  guint i;
+
+  settings_foreach(SETTINGS_TYPE_BINDING, &collect_bind, keys);
+  mlua_foreach_binding(&collect_lua_bind, keys);
+  g_ptr_array_sort(keys, cmp_str);
+  for (i = 0; i < keys->len; i++) {
+    const char *k = g_ptr_array_index(keys, i);
+    const char *cmd = settings_get(SETTINGS_TYPE_BINDING, k);
+    scr_LogPrint(LPRINT_NORMAL, "Key %-12s is bound to: %s", k,
+                 cmd ? cmd : "(Lua function)");
+  }
+  g_ptr_array_free(keys, TRUE);
+}
+
+//  split_bind_arg(arg, &key, &value)
+// Parse "key", "key =" or "key = command line".
+// Returns TRUE if there is an assignment (*value is NULL for "key =").
+static gboolean split_bind_arg(const char *arg, gchar **pkey, gchar **pvalue)
+{
+  const char *p = arg, *kend, *v;
+
+  *pkey = *pvalue = NULL;
+  while (*p == ' ' || *p == '\t')
+    p++;
+  if (!*p)
+    return FALSE;
+
+  // The key ends with a space, or with a '=' (but "Alt+=" is a key)
+  for (kend = p + 1; *kend && *kend != ' ' && *kend != '\t'; kend++)
+    if (*kend == '=' && kend[-1] != '+' && kend[-1] != '-')
+      break;
+  *pkey = g_strndup(p, kend - p);
+
+  for (v = kend; *v == ' ' || *v == '\t'; v++)
+    ;
+  if (*v != '=')
+    return FALSE;
+  for (v++; *v == ' ' || *v == '\t'; v++)
+    ;
+  if (*v)
+    *pvalue = g_strchomp(g_strdup(v));
+  return TRUE;
 }
 
 static void do_bind(char *arg)
 {
-  guint assign;
-  gchar *k_code, *value;
+  gboolean assign;
+  gchar *key, *value;
+  GError *err = NULL;
 
-  assign = parse_assigment(arg, &k_code, &value);
-  if (!k_code) {
-    settings_foreach(SETTINGS_TYPE_BINDING, &dump_bind, NULL);
+  assign = split_bind_arg(arg, &key, &value);
+  if (!key) {
+    dump_bindings();
     scr_setmsgflag_if_needed(SPECIAL_BUFFER_STATUS_ID, TRUE);
     scr_setattentionflag_if_needed(SPECIAL_BUFFER_STATUS_ID, TRUE,
                                    ROSTER_UI_PRIO_STATUS_WIN_MESSAGE, prio_max);
     return;
   }
   if (!assign) {  // This is a query
-    const char *val = settings_get(SETTINGS_TYPE_BINDING, k_code);
-    if (val)
-      scr_LogPrint(LPRINT_NORMAL, "Key %s is bound to: %s", k_code, val);
-    else
-      scr_LogPrint(LPRINT_NORMAL, "Key %s is not bound.", k_code);
-    g_free(k_code);
+    keyspec_t k;
+    gchar *canon = NULL;
+    if (key_parse(key, &k, &err) || key_from_legacy(key, &k))
+      canon = key_format(&k);
+    if (!canon) {
+      scr_LogPrint(LPRINT_NORMAL, "Invalid key: %s", err->message);
+    } else {
+      const char *val = settings_get(SETTINGS_TYPE_BINDING, canon);
+      if (!val && mlua_has_binding(canon))
+        val = "(Lua function)";
+      if (val)
+        scr_LogPrint(LPRINT_NORMAL, "Key %s is bound to: %s", canon, val);
+      else
+        scr_LogPrint(LPRINT_NORMAL, "Key %s is not bound.", canon);
+    }
+    g_clear_error(&err);
+    g_free(canon);
+    g_free(key);
     return;
   }
   // Update the key binding
-  if (!value) {
-    settings_del(SETTINGS_TYPE_BINDING, k_code);
-  } else {
+  {
     gchar *value_utf8 = to_utf8(value);
-    settings_set(SETTINGS_TYPE_BINDING, k_code, value_utf8);
+    if (!scr_bind_key(key, value_utf8, &err)) {
+      scr_LogPrint(LPRINT_NORMAL, "Invalid key: %s", err->message);
+      g_error_free(err);
+    }
     g_free(value_utf8);
-    g_free(value);
   }
-  g_free(k_code);
+  g_free(value);
+  g_free(key);
+}
+
+static void do_members(char *arg)
+{
+  scr_members(arg);
+}
+
+static void do_console(char *arg)
+{
+  scr_console(arg);
 }
 
 static void do_quit(char *arg)
@@ -4055,6 +4219,16 @@ static void do_iline(char *arg)
     readline_iline_start();
   } else if (!strcasecmp(arg, "iline_end")) {
     readline_iline_end();
+  } else if (!strcasecmp(arg, "buffer_start")) {
+    readline_buffer_start();
+  } else if (!strcasecmp(arg, "buffer_end")) {
+    readline_buffer_end();
+  } else if (!strcasecmp(arg, "newline")) {
+    readline_insert_newline();
+  } else if (!strcasecmp(arg, "line_up_or_hist")) {
+    readline_line_up_or_hist();
+  } else if (!strcasecmp(arg, "line_down_or_hist")) {
+    readline_line_down_or_hist();
   } else if (!strcasecmp(arg, "iline_fdel")) {
     readline_forward_kill_iline();
   } else if (!strcasecmp(arg, "iline_bdel")) {
@@ -4161,7 +4335,8 @@ static void do_source(char *arg)
     // source files in list
     for (i=0; i < flist.gl_pathc; ++i) {
       recur_level++;
-      cfg_read_file(flist.gl_pathv[i], FALSE);
+      scr_LogPrint(LPRINT_LOGNORM, "Reading %s", flist.gl_pathv[i]);
+      mlua_dofile(flist.gl_pathv[i]);
       recur_level--;
     }
     // free

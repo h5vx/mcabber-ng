@@ -5,7 +5,7 @@ Invia un messaggio multilinea. Per scrivere un singolo messaggio di diverse line
 In modo multi-line, ogni linea (eccetto i comandi) inserita viene aggiunta al messaggio. Una volta che il messaggio è finito, può essere spedito al contatto corrente con il comando "/msay send".
 Il sottocomando 'begin' abilita il modo multi-linea. Notate che consente di specificare un oggetto per il messaggio.
 Il modo multi-linea 'verbatim' disabilita i comandi, in modo da consentire l'inserimento di linee che cominciano con uno slash. Solo il comando "msay" (con i parametre 'send' o 'abort') può essere usato per uscire dalla modalità multi-linea.
-Il sottocomando 'toggle' può essere associato ad un tasto per utilizzare il modo multi-linea velocemente (per esempio, "bind M13 = msay toggle" per attivare/disattivare ;a modalità con la combinazione Meta-Enter).
+Il sottocomando 'toggle' può essere associato ad un tasto per utilizzare il modo multi-linea velocemente (per esempio, "bind Alt+m = msay toggle" per attivare/disattivare ;a modalità con la combinazione Alt+m).
 
 /msay begin [oggetto]
  Entra in modalità multi-linea

@@ -5,6 +5,8 @@
  /ILINE hist_beginning_search_bwd|hist_beginning_search_fwd
  /ILINE hist_prev|hist_next
  /ILINE iline_start|iline_end|iline_fdel|iline_bdel
+ /ILINE buffer_start|buffer_end|newline
+ /ILINE line_up_or_hist|line_down_or_hist
  /ILINE iline_accept|iline_accept_down_hist
  /ILINE iline_insert
  /ILINE clear_history
@@ -46,13 +48,23 @@
 /iline hist_next
  Наступний рядок в історії.
 /iline iline_start
- Перескочити на початок рядка.
+ Перехід на початок поточного рядка
 /iline iline_end
- Перескочити до кінця рядка.
+ Перехід у кінець поточного рядка
 /iline iline_fdel
- Вилучити кінець рядка, починаючи з курсору.
+ Видаляє текст від курсора до кінця рядка (у кінці рядка з'єднує його з наступним)
 /iline iline_bdel
- Вилучити початок рядка до позиції курсору.
+ Видаляє текст від початку рядка до курсора (на початку рядка з'єднує його з попереднім)
+/iline buffer_start
+ Перехід на початок поля введення (перший рядок)
+/iline buffer_end
+ Перехід у кінець поля введення (останній рядок)
+/iline newline
+ Вставляє розрив рядка: повідомлення буде багаторядковим
+/iline line_up_or_hist
+ Перехід на попередній рядок поля введення, на першому рядку — пошук назад в історії
+/iline line_down_or_hist
+ Перехід на наступний рядок поля введення, на останньому рядку — пошук вперед в історії
 /iline iline_accept
  Затвердити рядок.
 /iline iline_accept_down_hist

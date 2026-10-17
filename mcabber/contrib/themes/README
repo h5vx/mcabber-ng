@@ -1,0 +1,6 @@
+The color themes of the original mcabber are now Lua modules, installed
+with mcabber-ng (see ../../lua/mcabber/themes/):
+
+  mc.theme(require "mcabber.themes.light")
+
+Available: classic, modern, colorcli, light, light2, mikael-256, oliver.

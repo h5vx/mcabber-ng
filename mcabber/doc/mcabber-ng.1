@@ -1,13 +1,13 @@
 '\" t
-.\"     Title: mcabber
+.\"     Title: mcabber-ng
 .\"    Author: Mikael BERTHE <mcabber@lilotux.net>
-.\" Generator: DocBook XSL Stylesheets v1.78.1 <http://docbook.sf.net/>
-.\"      Date: October 2021
+.\" Generator: DocBook XSL Stylesheets vsnapshot <http://docbook.sf.net/>
+.\"      Date: October 2026
 .\"    Manual: \ \&
-.\"    Source: \ \& 1.1.3-dev
+.\"    Source: \ \& 0.1.0-dev
 .\"  Language: English
 .\"
-.TH "MCABBER" "1" "October 2021" "\ \& 1\&.1\&.3\-dev" "\ \&"
+.TH "MCABBER\-NG" "1" "October 2026" "\ \& 0\&.1\&.0\-dev" "\ \&"
 .\" -----------------------------------------------------------------
 .\" * Define some portability stuff
 .\" -----------------------------------------------------------------
@@ -28,13 +28,13 @@
 .\" * MAIN CONTENT STARTS HERE *
 .\" -----------------------------------------------------------------
 .SH "NAME"
-mcabber \- a simple Jabber (XMPP) console client
+mcabber-ng \- a Jabber (XMPP) console client configured in Lua
 .SH "SYNOPSIS"
 .sp
-\fImcabber\fR [ \-h | \-V | \-f configfile ]
+\fImcabber\-ng\fR [ \-h | \-V | \-n ] [ \-f configfile ]
 .SH "DESCRIPTION"
 .sp
-mcabber(1) is a small Jabber (XMPP) console client\&. For now it needs a configuration file to start, so please copy the sample mcabberrc file and adapt your connection settings\&.
+mcabber\-ng is a small Jabber (XMPP) console client, based on mcabber\&. For now it needs a configuration file to start, so please copy the sample init\&.lua file to $XDG_CONFIG_HOME/mcabber\-ng/init\&.lua (usually ~/\&.config/mcabber\-ng/init\&.lua) and adapt your connection settings\&. The configuration file is a Lua script, see the CONFIGURATION FILE section\&.
 .sp
 You also need to have an existing Jabber account to use this software, as it cannot (un)register accounts yet\&.
 .sp
@@ -148,7 +148,8 @@ source code, in the contrib directory\&.
 .sp -1
 .IP \(bu 2.3
 .\}
-\fIModules:\fRmcabber
+\fIModules:\fR
+mcabber
 can load modules (a\&.k\&.a\&. plugins) at runtime that extend its features\&.
 .RE
 .SH "OPTIONS"
@@ -168,7 +169,12 @@ version and compile\-time definitions\&.
 \-f configfile
 .RS 4
 Use configuration file
-\fIconfigfile\fR
+\fIconfigfile\fR\&. The directory of this file is used as the configuration directory\&.
+.RE
+.PP
+\-n
+.RS 4
+Load the configuration file, print the resulting options, aliases and key bindings, and exit\&. The exit status is not zero if the configuration file cannot be loaded\&.
 .RE
 .SH "WINDOWS/PANES"
 .sp
@@ -185,7 +191,11 @@ Text typing occurs in the \fIinput line\fR; basic operations are supported (left
 .sp
 PageUp and PageDown keys are used to move in the roster\&.
 .sp
-Up and Down arrow keys can be used to move in the input line history; they jump to the previous/next line from the history beginning with the same string (from first column to the cursor column)\&.
+Up and Down arrow keys can be used to move in the input line history; they jump to the previous/next line from the history beginning with the same string (from first column to the cursor column)\&. When the input line has several rows, they move the cursor between the rows first\&.
+.sp
+Messages can have several lines: Alt+Enter (or Ctrl+j) inserts a line break, and Enter sends the whole message\&. The input line grows as needed (see the \fIinput_max_rows\fR option)\&.
+.sp
+Pasted text is not sent line by line: it is inserted in the input line, and Enter sends it as one message\&. Pasting is detected with the terminal "bracketed paste" mode, or, when the terminal doesn\(cqt support it, when many keys including Enter are received at once\&. See the \fIpaste_mode\fR option\&.
 .sp
 To send a message, move to the chosen buddy in the buddylist, type your message and hit enter\&. If the line begins with a slash, this will be interpreted as a command (see the COMMAND section below)\&. Hit escape to leave the chat mode\&.
 .sp
@@ -196,14 +206,29 @@ Esc
 Disable chat mode
 .RE
 .PP
-Ctrl\-a
+Enter
 .RS 4
-Go to the beginning of the input line
+Send the message (or run the command)
 .RE
 .PP
-Ctrl\-e
+Alt+Enter, Ctrl\-j
 .RS 4
-Go to the end of the input line
+Insert a line break
+.RE
+.PP
+Ctrl\-a, Home
+.RS 4
+Go to the beginning of the current line
+.RE
+.PP
+Ctrl\-e, End
+.RS 4
+Go to the end of the current line
+.RE
+.PP
+Ctrl\-Home/Ctrl\-End
+.RS 4
+Go to the beginning/end of the input buffer
 .RE
 .PP
 Ctrl\-l
@@ -213,7 +238,7 @@ Force a refresh
 .PP
 Up/Down
 .RS 4
-Move in the input line history
+Move between the rows of the input line, or in the input line history
 .RE
 .PP
 PgUp/PgDown
@@ -258,12 +283,12 @@ Move the cursor forward to the end of the current or next word
 .PP
 Ctrl\-u
 .RS 4
-Delete from beginning of the line to the cursor
+Delete from beginning of the line to the cursor (or join the line with the previous one)
 .RE
 .PP
 Ctrl\-k
 .RS 4
-Delete from the cursor to the end of line
+Delete from the cursor to the end of line (or join the line with the next one)
 .RE
 .PP
 Ctrl\-w
@@ -475,7 +500,7 @@ This is a group named
 John is online, can see your status, and sent you a message that you did not read yet
 .RE
 .PP
-\*(Aq {?} Sally\*(Aq
+\*(Aq \e{?} Sally\*(Aq
 .RS 4
 Neither you nor Sally have authorized each other to see your online status
 .RE
@@ -578,37 +603,34 @@ Request unsubscription from the buddy\(cqs presence updates
 .RE
 .RE
 .PP
-/bind [keycode [= command line]]
+/bind [key [= command line]]
 .RS 4
-Bind the command to the key given as "keycode"\&. To examine which keys are currently not used look at
-mcabber
-log window and press examined key\&. For example: "Unknown key=265" means that you can bind some command to key #265\&.
+Bind the command line to a key combination\&. Keys are given by name, like "Alt+j", "Ctrl+Left", "F5" or "Ctrl+Shift+PgUp" (see KEY NAMES below)\&. To find the name of a key, press it: unbound keys are reported in the log window, for example "Unknown key: Alt+j"\&.
 .PP
 (without arguments)
 .RS 4
 Display list of current bindings
 .RE
 .PP
-\fIkeycode\fR
+\fIkey\fR
 .RS 4
 Display the command line bound to this key
 .RE
 .PP
-\fIkeycode\fR=
+\fIkey\fR =
 .RS 4
-Unbind key with code "keycode"
+Remove the binding of "key"
 .RE
 .PP
-\fIkeycode\fR = command line
+\fIkey\fR = command line
 .RS 4
-Bind "command line" to the key with code "keycode"
+Bind "command line" to the key
 .sp
 .if n \{\
 .RS 4
 .\}
 .nf
-Example: "/bind 265 = status away" (265 is F1)\&. +
-Note: keycodes can be different depending on your ncurses configuration\&. +
+Example: "/bind F5 = roster toggle_offline" +
 Tip: aliases also can be used instead of commands\&.
 .fi
 .if n \{\
@@ -1026,7 +1048,7 @@ multi\-line mode disables commands, so that it is possible to enter lines starti
 
 The
 \fItoggle\fR
-subcommand can be bound to a key to use the multi\-line mode quickly (for example, "bind M13 = msay toggle" to switch using the Meta\-Enter combination)\&.
+subcommand can be bound to a key to use the multi\-line mode quickly (for example, "bind Alt+m = msay toggle"; Alt+Enter inserts a line break)\&.
 .PP
 \fIbegin\fR [subject]
 .RS 4
@@ -1459,7 +1481,7 @@ Without arguments prints a list of all set options with their values
 .PP
 /source pattern
 .RS 4
-Read configuration files, that match glob pattern (sorted in alphabetical order)\&.
+Run the Lua files that match the glob pattern (sorted in alphabetical order)\&.
 .RE
 .PP
 /status [online|avail|free|dnd|notavail|away [\-|statusmessage]], /status message \-|statusmessage
@@ -1488,13 +1510,383 @@ Note: this status will be overridden by subsequent "/status" commands\&. If you 
 Note: The jid can include a resource (i\&.e\&. user@server/resource)\&.
 .RE
 .PP
+/members [show|hide|toggle]
+.RS 4
+Show or hide the members of the current room (see USER INTERFACE)\&.
+.RE
+.PP
+/console [show|hide|toggle|clear]
+.RS 4
+Display the XMPP console (see USER INTERFACE)\&.
+\fIclear\fR
+empties it\&.
+.RE
+.PP
 /version
 .RS 4
 Display current version of mcabber\&.
 .RE
 .SH "CONFIGURATION FILE"
 .sp
-See the provided sample configuration file, which should be self\-documenting\&.
+The configuration file, $XDG_CONFIG_HOME/mcabber\-ng/init\&.lua by default, is a Lua script (Lua 5\&.1 / LuaJIT)\&. The provided sample configuration file (init\&.lua\&.example) documents all the options\&. The mc table (also available with require "mcabber") gives access to mcabber\-ng:
+.PP
+mc\&.set { name = value, \&... }, mc\&.set(name, value)
+.RS 4
+Set options\&. Values can be strings, numbers or booleans (true is 1, false is 0); nil removes the option\&. mc\&.opt\&.name = value is equivalent, and mc\&.opt\&.name or mc\&.get(name) read an option (as a string)\&.
+.RE
+.PP
+mc\&.alias { name = "command line", \&... }, mc\&.alias(name, command)
+.RS 4
+Define command aliases\&.
+.RE
+.PP
+mc\&.bind { [key] = command, \&... }, mc\&.bind(key, command)
+.RS 4
+Bind keys (see KEY NAMES) to command lines or to Lua functions\&. A function receives a table with the key name (\fIkey\fR
+field)\&. mc\&.unbind(key) removes a binding, mc\&.bindings() returns all of them, mc\&.key_name(name) returns the canonical name of a key\&.
+.RE
+.PP
+mc\&.command(command line)
+.RS 4
+Run a mcabber command (the leading slash is optional)\&. While the configuration file is loaded, only "safe" commands can be used (set, bind, alias, pgp, source, status, color, otrpolicy, module)\&.
+.RE
+.PP
+mc\&.color\&.roster(statuses, jid, color), mc\&.color\&.muc(room, mode), mc\&.color\&.mucnick(nick, color)
+.RS 4
+Coloring rules, see the /color command\&.
+.RE
+.PP
+mc\&.module\&.load(name), mc\&.module\&.unload(name)
+.RS 4
+Load or unload a module\&.
+.RE
+.PP
+mc\&.status(status [, message])
+.RS 4
+Set your status\&.
+.RE
+.PP
+mc\&.timer(milliseconds, function [, repeat])
+.RS 4
+Call the function after the delay (repeatedly if
+\fIrepeat\fR
+is true, until the function returns false)\&. Returns an id for mc\&.cancel(id)\&.
+.RE
+.PP
+mc\&.on(event, function(ev) \&... end [, { priority = n }])
+.RS 4
+Run a function when an event occurs (see EVENTS below)\&. Returns an id for mc\&.off(id)\&. Handlers with a lower priority run first (default 0)\&. A handler can return mc\&.DROP (or false) to drop the event when possible, or mc\&.STOP to stop running the other handlers\&.
+.RE
+.PP
+mc\&.send(jid, text [, { subject = "\&..." }]), mc\&.say(text)
+.RS 4
+Send a message to a contact (or a room), or to the current buddy\&.
+.RE
+.PP
+mc\&.buddy\&.current()
+.RS 4
+Information about the selected buddy: a table with the
+\fIjid\fR,
+\fIname\fR,
+\fItype\fR
+("user", "room", "agent", "group", "special"),
+\fIstatus\fR
+and
+\fIresource\fR
+fields, or nil\&.
+.RE
+.PP
+mc\&.input\&.get(), mc\&.input\&.set(text), mc\&.input\&.insert(text)
+.RS 4
+Read, replace or insert text in the input line\&.
+.RE
+.PP
+mc\&.print(\&...), mc\&.log(\&...), mc\&.debug(\&...)
+.RS 4
+Print to the log window (mc\&.log also writes to the trace log file, mc\&.debug only when debugging is enabled)\&.
+.RE
+.PP
+mc\&.shell_quote(text)
+.RS 4
+Quote a string for the shell\&. Texts coming from the network (messages, nicknames\&...) must always be quoted before being passed to os\&.execute() or io\&.popen()\&.
+.RE
+.PP
+mc\&.version, mc\&.config_dir, mc\&.config_file
+.RS 4
+The mcabber\-ng version, configuration directory and file\&.
+.RE
+.sp
+Other Lua files can be loaded with require(): <config dir>/lua/ is in the module search path\&. The \fI/lua\fR command runs Lua code at runtime ("/lua 1+1" prints 2) and \fI/source\fR runs a Lua file\&.
+.SH "EVENTS"
+.sp
+Handlers receive a table describing the event\&. Times are Unix timestamps, statuses are "online", "free", "dnd", "notavail", "away", "invisible" or "offline"\&.
+.PP
+message_in
+.RS 4
+A message has been received, before it is displayed and logged\&. Fields: jid, resource, nick (rooms), text, muc (room message), private (private message from a room participant), time, delayed, carbon, error, encrypted ("pgp", "otr" or nil)\&. The handlers can change
+\fItext\fR\&. mc\&.DROP drops the message\&.
+.RE
+.PP
+message_received
+.RS 4
+A message has been displayed\&. Same fields as message_in, plus attention, highlight (your nick is in a room message), own (your message in a room), active (the window of this contact is open)\&.
+.RE
+.PP
+message_send
+.RS 4
+A message is about to be sent\&. Fields: jid, bare_jid, text, subject, muc, private\&. The handlers can change
+\fItext\fR
+and
+\fIsubject\fR\&. mc\&.DROP cancels the message\&.
+.RE
+.PP
+message_out
+.RS 4
+A message has been sent\&. Fields: jid, nick, text, muc, private, time, carbon (sent by another client), encrypted\&.
+.RE
+.PP
+status
+.RS 4
+The status of a contact has changed\&. Fields: jid, resource, old, new, message, priority, time\&.
+.RE
+.PP
+my_status
+.RS 4
+Your status has changed\&. Fields: old, new, message\&.
+.RE
+.PP
+connect, disconnect
+.RS 4
+After the connection (when the roster has been received), before the disconnection\&.
+.RE
+.PP
+unread
+.RS 4
+The number of unread buffers has changed\&. Fields: unread, attention, muc_unread, muc_attention\&.
+.RE
+.PP
+subscription
+.RS 4
+A subscription request or answer has been received\&. Fields: type ("subscribe", "unsubscribe", "subscribed", "unsubscribed"), jid, message\&. mc\&.DROP ignores it\&.
+.RE
+.PP
+receipt
+.RS 4
+A message delivery receipt has been received\&. Fields: jid, id\&.
+.RE
+.PP
+ready, quit
+.RS 4
+The user interface is ready (before connecting), mcabber\-ng is exiting\&.
+.RE
+.PP
+hook\-*
+.RS 4
+Hooks run by modules; the fields are the hook arguments (strings)\&.
+.RE
+.sp
+Lua code called by mcabber\-ng (handlers, key bindings, timers) must finish within \fIlua_timeout_ms\fR milliseconds (default 2000, 0 disables the check)\&. The LuaJIT compiler is disabled because compiled code cannot be interrupted; call jit\&.on() in the configuration file to enable it\&.
+.SH "MESSAGE FORMAT"
+.sp
+The text displayed before each message (the "head": time, direction mark, nickname\&...) can be changed with mc\&.format:
+.PP
+mc\&.format\&.message
+.RS 4
+A template for all messages, a table of templates per kind of message ("in", "out", "info", "error", "special" for the status window, "default"), or a Lua function (see below)\&.
+.RE
+.PP
+mc\&.format\&.time
+.RS 4
+The default time format (strftime(3) format), e\&.g\&. "%H:%M"\&. By default it depends on the
+\fItime_prefix\fR
+option\&.
+.RE
+.PP
+mc\&.format\&.indent
+.RS 4
+Indentation of the following lines of a message (number of columns)\&. By default they are aligned with the text of the first line\&.
+.RE
+.sp
+Templates contain text and fields:
+.sp
+.if n \{\
+.RS 4
+.\}
+.nf
+{field}          value of the field
+{field:10}       padded to 10 columns ({field:>10} on the right,
+                 {field:^10} centered); {field:\&.10} truncated
+{time:%H:%M}     time with a specific format
+{?field}\&.\&.\&.{/}   text used only if the field is set ({!field}\&.\&.\&.{/}
+                 if it is not set)
+{#style}         the following text uses this style (general, msgin,
+                 msgout, msghl, info, timestamp, readmark, status,
+                 roster, nick for the color of the nickname\&.\&.\&.); {#}
+                 returns to the color of the line
+{{ and }}        braces
+.fi
+.if n \{\
+.RE
+.\}
+.sp
+Fields: time, mark (the original "⇐=", "\-→", "\fB*\fR"\&...), nick (sender in rooms and for actions, contact or own username otherwise), kind, and the flags me (action, "/me"), muc, private (private message in a room), delayed, receipt (waiting for a receipt), carbon, highlight, own (your message in a room), pgp, otr, encrypted, in, out, info, error, special\&.
+.sp
+The default format is:
+.sp
+.if n \{\
+.RS 4
+.\}
+.nf
+{?delayed}{#timestamp}{/}{time}{#} {mark} {?private}PRIV#<{nick}> {/}
+{?me}{#nick}*{nick}{#} {/}{?muc}{!me}{#nick}<{nick}>{#} {/}{/}
+.fi
+.if n \{\
+.RE
+.\}
+.sp
+(without the line break)\&. A Lua function receives a table with the fields (time is a number) and returns a string, a list of segments ("text" or { "text", "style" }), or nil to use the default format\&. Example:
+.sp
+.if n \{\
+.RS 4
+.\}
+.nf
+mc\&.format\&.message = {
+  default = "{time:%H:%M} {#nick}{nick:>10\&.10}{#} | ",
+  info = "{time:%H:%M}            * ",
+}
+.fi
+.if n \{\
+.RE
+.\}
+.SH "USER INTERFACE"
+.PP
+Input line
+.RS 4
+The input line is below the chat window (\fIinput_position\fR
+option: "chat", the default, or "bottom" for the bottom of the screen, as in the original mcabber)\&.
+.RE
+.PP
+Members of a room
+.RS 4
+The members of the current room are displayed next to the chat window (\fImuc_members\fR
+option: "column", the default; "overlay" to display them over the chat window, using only the needed height; "none")\&.
+\fImuc_members_width\fR
+sets the width (default 20),
+\fImuc_members_left\fR
+puts the column on the left\&. The /members command shows or hides the list\&. mc\&.format\&.members formats the items (fields: name, role, role_char, affil, status, icon, self)\&.
+.RE
+.PP
+XMPP console
+.RS 4
+/console displays the XML stream (the SASL credentials are masked)\&. While the console is displayed, text typed in the input line is sent to the server as raw XML (commands still work)\&.
+.RE
+.PP
+Frames
+.RS 4
+The
+\fIui_borders\fR
+option draws frames around the windows: "rounded", "single", "double", "heavy", "ascii" or "none" (default)\&. The titles of the roster and log frames are set by
+\fIui_title_roster\fR
+and
+\fIui_title_log\fR; the chat status line is displayed in the frame above the chat window\&. Changes are applied by /screen_refresh (Ctrl\-l)\&.
+.RE
+.PP
+Roster and status lines
+.RS 4
+mc\&.format\&.roster (a template, or a table of templates for "contact", "room", "group" and "special" items, or a function), mc\&.format\&.chat_status and mc\&.format\&.main_status change the roster items and the status lines (see MESSAGE FORMAT for the templates; {name:*} uses the available width and {>} aligns the rest on the right)\&. mc\&.format\&.icons is a table of status icons (online, free, away, notavail, dnd, invisible, offline, unknown, room, room_out)\&.
+.sp
+.if n \{\
+.RS 4
+.\}
+.nf
+Roster fields: name, jid, status, status_char, icon, pending (the
+"#", "+", "\&." or attention sign), unread (count), count (members of
+a folded group), type, selected, folded, msg, composing, paused,
+sub_from, sub_to\&.
+.fi
+.if n \{\
+.RE
+.\}
+.sp
+.if n \{\
+.RS 4
+.\}
+.nf
+Chat status fields: name, jid, resource, type, type_name, status,
+status_char, icon, msg (status message or room topic), chatstate
+(active, composing, paused, inactive, gone), chatmode, locked,
+unread\&.
+.fi
+.if n \{\
+.RE
+.\}
+.sp
+.if n \{\
+.RS 4
+.\}
+.nf
+Main status fields: unread (sign), status, status_char, icon, info,
+msg, jid\&.
+.fi
+.if n \{\
+.RE
+.\}
+.RE
+.PP
+Input prompt
+.RS 4
+mc\&.format\&.input_prompt is displayed before the input line (it uses at most a third of the width)\&. Fields: name, jid, type (of the current buddy), chatmode, command (the line is a command), multiline (/msay mode)\&.
+.sp
+.if n \{\
+.RS 4
+.\}
+.nf
+Style names can contain fields: {#status_$status} uses the
+status_online, status_away\&.\&.\&. styles\&.
+.fi
+.if n \{\
+.RE
+.\}
+.RE
+.PP
+Themes
+.RS 4
+Themes are provided as Lua modules, for example mc\&.theme(require "mcabber\&.themes\&.modern")\&. The status line of the modern theme is made of rounded "islands" drawn with Powerline glyphs (a Nerd Font is needed); other characters can be used with mc\&.theme(require("mcabber\&.themes\&.modern")\&.with { caps = { "▐", "▌" } }) or no caps with { caps = false }\&. Available themes: modern, classic (the original look), and the color themes of the original mcabber: colorcli, light, light2, mikael\-256, oliver\&. A theme is a Lua table of styles, with
+\fIoptions\fR
+and
+\fIformat\fR
+sections and an optional
+\fIsetup\fR
+function (see STYLES AND THEMES); it can be written in <config dir>/lua/\&.
+.RE
+.SH "STYLES AND THEMES"
+.sp
+Colors and text attributes are defined by styles:
+.sp
+.if n \{\
+.RS 4
+.\}
+.nf
+mc\&.style("msgin", "fg=#c0caf5 bg=default")
+mc\&.style("timestamp", { fg = "#565f89", italic = true })
+mc\&.theme { general = "white", status = "black on cyan bold", \&.\&.\&. }
+.fi
+.if n \{\
+.RE
+.\}
+.sp
+A style is a string of words: a foreground color, "on" and a background color, "fg=COLOR", "bg=COLOR", and attributes (bold, dim, italic, underline, reverse, blink, standout); or a table with the \fIfg\fR and \fIbg\fR fields and boolean attributes\&. Colors are default, black, red, green, yellow, blue, magenta, cyan, white (optionally prefixed by "bright"), a palette number (0\-255) or "#rrggbb"\&. Colors are approximated when the terminal has less colors\&. 24\-bit colors are used if the terminal supports them (e\&.g\&. TERM=xterm\-direct); the \fIui_colors\fR option ("auto", "8", "16", "256" or "truecolor") overrides the detection\&.
+.sp
+The styles of the interface are: general, msgin, msgout, msghl, info, timestamp, readmark, status (status lines), log, roster, rostersel (selected item), rosterselmsg, rosternewmsg, border, title, title_active, roster_group, roster_unread, status_online, status_free, status_away, status_notavail, status_dnd, status_invisible, status_offline, badge, nick_self, input, input_prompt\&. The "background", "bgstatus" and "bgrostersel" entries are background colors\&. Any other name can be defined and used in formats ({#name})\&. The old color_* options still work for the first ones\&.
+.sp
+mc\&.theme(t) sets the styles of the table t; its optional \fIoptions\fR and \fIformat\fR fields are passed to mc\&.set and mc\&.format\&.
+.SH "KEY NAMES"
+.sp
+A key combination is written with modifiers joined to the key by plus signs, like "Ctrl+Alt+Left"\&. Modifiers are Ctrl (or C), Alt (or Meta, M) and Shift (or S); a minus sign can be used instead of the plus sign ("M\-j")\&. Names are not case\-sensitive, except single characters\&.
+.sp
+Named keys are: Enter, Tab, Backspace, Esc, Space, Up, Down, Left, Right, Home, End, PgUp, PgDn, Ins, Del, Begin, F1 to F63, WheelUp, WheelDown\&. Any other key is a single character, like "Alt+j", "Alt+ж", "Ctrl+=" or "Alt+\-" ("Alt+Plus" for the plus sign)\&.
+.sp
+Some combinations cannot be told apart by terminals: Ctrl+i is Tab, Ctrl+m is Enter, Ctrl+[ is Esc, and Shift with a letter is the uppercase letter ("Alt+Shift+j" is "Alt+J")\&. Combinations like Ctrl+Enter or Shift+Enter are only available with terminals that report them (CSI u / modifyOtherKeys)\&.
 .SH "FILES"
 .sp
 The following files can be used by mcabber(1):
@@ -1503,12 +1895,12 @@ The following files can be used by mcabber(1):
 .RS 4
 .\}
 .nf
-$HOME/\&.mcabber/mcabberrc    Default configuration file
-$HOME/\&.config/mcabber/mcabberrc Alternate location (can use XDG_CONFIG_HOME)
-$HOME/\&.mcabberrc            Configuration file used if no other has been found
-$HOME/\&.mcabber/histo/       Default directory for storing chat history files, if enabled
-/usr/share/mcabber/help/    Default directory for online help files
-/usr/lib/mcabber/           Default directory for modules
+$HOME/\&.config/mcabber\-ng/init\&.lua   Default configuration file (uses XDG_CONFIG_HOME)
+$HOME/\&.config/mcabber\-ng/lua/       Lua modules directory (for require)
+$HOME/\&.config/mcabber\-ng/histo/     Default directory for storing chat history files, if enabled
+/usr/share/mcabber\-ng/help/         Default directory for online help files
+/usr/share/mcabber\-ng/init\&.lua\&.example  Sample configuration file
+/usr/lib/mcabber\-ng/                Default directory for modules
 .fi
 .if n \{\
 .RE
@@ -1518,14 +1910,10 @@ $HOME/\&.mcabber/histo/       Default directory for storing chat history files, 
 Certainly\&. Please tell me if you find one! :\-) Please visit our website to find out about the MUC room and the bug tracker\&.
 .SH "AUTHOR"
 .sp
-Written by \m[blue]\fBMikael BERTHE\fR\m[]\&\s-2\u[1]\d\s+2 and others (see AUTHORS file)\&.
+Written by Mikael BERTHE and others (see AUTHORS file)\&.
 .SH "RESOURCES"
 .sp
-\m[blue]\fBMain web site\fR\m[]\&\s-2\u[2]\d\s+2
-.sp
-\m[blue]\fBOfficial wiki\fR\m[]\&\s-2\u[3]\d\s+2
-.sp
-\m[blue]\fBMCabber MUC room\fR\m[]\&\s-2\u[4]\d\s+2
+Main web site Official wiki xmpp:mcabber@conf\&.lilotux\&.net[MCabber MUC room]
 .SH "COPYING"
 .sp
 Copyright (C) 2005\-2021 Mikael Berthe and others\&.
@@ -1536,25 +1924,4 @@ Free use of this software is granted under the terms of the GNU General Public L
 \fBMikael BERTHE\fR <\&mcabber@lilotux\&.net\&>
 .RS 4
 Author.
-.RE
-.SH "NOTES"
-.IP " 1." 4
-Mikael BERTHE
-.RS 4
-\%mailto:mikael@lilotux.net
-.RE
-.IP " 2." 4
-Main web site
-.RS 4
-\%https://mcabber.com/
-.RE
-.IP " 3." 4
-Official wiki
-.RS 4
-\%https://wiki.mcabber.com/
-.RE
-.IP " 4." 4
-MCabber MUC room
-.RS 4
-\%xmpp:mcabber@conf.lilotux.net
 .RE

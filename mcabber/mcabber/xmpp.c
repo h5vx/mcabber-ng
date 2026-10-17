@@ -39,6 +39,7 @@
 #include "utils.h"
 #include "main.h"
 #include "carbons.h"
+#include "mlua.h"
 
 #define RECONNECTION_TIMEOUT    60L
 
@@ -50,7 +51,7 @@ LmConnection* lconnection = NULL;
 static guint AutoConnection;
 
 inline void update_last_use(void);
-inline gboolean xmpp_reconnect();
+inline gboolean xmpp_reconnect(gpointer data);
 
 enum imstatus mystatus = offline;
 static enum imstatus mywantedstatus = available;
@@ -783,7 +784,7 @@ static void connection_auth_cb(LmConnection *connection, gboolean success,
     scr_LogPrint(LPRINT_LOGNORM, "Authentication failed");
 }
 
-gboolean xmpp_reconnect()
+gboolean xmpp_reconnect(gpointer data)
 {
   if (!lconnection)
     xmpp_connect();
@@ -1252,6 +1253,13 @@ static LmHandlerResult handle_messages(LmMessageHandler *handler,
           hk_run_handlers("hook-mdr-received", args);
         }
 #endif
+        {
+          mlua_event_t *ev = mlua_event_new("receipt");
+          mlua_event_set_str(ev, "jid", from);
+          mlua_event_set_str(ev, "id", id);
+          mlua_event_emit(ev);
+          mlua_event_free(ev);
+        }
       }
     }
   }
@@ -1706,11 +1714,56 @@ typedef enum {
         LM_LOG_LEVEL_SASL)
 } LmLogLevelFlags;
 
+//  console_capture(message)
+// Loudmouth logs the network data in several messages:
+//   "SEND:" or "RECV [n]:", a line of dashes, the data ('quoted' when it
+//   is received), and a line of dashes.
+static void console_capture(const char *message)
+{
+  static enum { IDLE, HEADER, DATA } state;
+  static gboolean outgoing;
+  const char *p = message;
+
+  while (*p == '\n')
+    p++;
+  if (!strncmp(p, "SEND:", 5) || !strncmp(p, "RECV", 4)) {
+    outgoing = (*p == 'S');
+    state = HEADER;
+  } else if (!strncmp(p, "---", 3)) {
+    state = (state == HEADER) ? DATA : IDLE;
+  } else if (state == DATA) {
+    gsize len = strlen(p);
+    gchar *xml;
+    while (len && (p[len-1] == '\n' || p[len-1] == '\r'))
+      len--;
+    if (!outgoing && len >= 2 && p[0] == '\'' && p[len-1] == '\'') {
+      p++;
+      len -= 2;
+    }
+    xml = g_strndup(p, len);
+    scr_console_add(outgoing, xml);
+    g_free(xml);
+  }
+}
+
+//  xmpp_send_raw(xml)
+// Send raw XML data.  Returns FALSE if we are not connected.
+gboolean xmpp_send_raw(const char *xml)
+{
+  if (!xmpp_is_online())
+    return FALSE;
+  lm_connection_send_raw(lconnection, xml, NULL);
+  return TRUE;
+}
+
 static void lm_debug_handler (const gchar    *log_domain,
                               GLogLevelFlags  log_level,
                               const gchar    *message,
                               gpointer        user_data)
 {
+  if (message && (log_level & LM_LOG_LEVEL_NET))
+    console_capture(message);
+
   if (message && *message) {
     char *msg;
     int mcabber_loglevel = settings_opt_get_int("tracelog_level");

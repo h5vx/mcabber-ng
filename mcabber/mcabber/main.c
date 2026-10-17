@@ -44,6 +44,8 @@
 #include "help.h"
 #include "events.h"
 #include "compl.h"
+#include "mlua.h"
+#include "msgformat.h"
 
 #ifndef MODULES_ENABLE
 # include "fifo.h"
@@ -217,7 +219,7 @@ static char *password_eval(const char *command, int *status)
 
 static void credits(void)
 {
-  const char *v_fmt = "MCabber %s -- Email: mcabber [at] lilotux [dot] net\n";
+  const char *v_fmt = "mcabber-ng %s (based on MCabber by Mikael Berthe)\n";
   char *v = mcabber_version();
   printf(v_fmt, v);
   scr_LogPrint(LPRINT_NORMAL|LPRINT_NOTUTF8, v_fmt, v);
@@ -227,6 +229,7 @@ static void credits(void)
 static void compile_options(void)
 {
   puts("Installation data directory: " DATA_DIR "\n");
+  puts("Embedded Lua: " MCABBER_LUA_IMPL);
 #ifdef HAVE_UNICODE
   puts("Compiled with unicode support.");
 #endif
@@ -252,6 +255,59 @@ static void compile_options(void)
 #ifdef ENABLE_DEBUG
   puts("Compiled with debugging support.");
 #endif
+}
+
+static void usage(const char *progname)
+{
+  printf("Usage: %s [-h|-V|-n] [-f init.lua]\n\n"
+         "  -f file  use this configuration file\n"
+         "           (default: $XDG_CONFIG_HOME/mcabber-ng/init.lua)\n"
+         "  -n       load the configuration, print it and exit\n"
+         "  -V       print compilation options and exit\n"
+         "  -h       print this help and exit\n", progname);
+}
+
+static void dump_setting(char *k, char *v, void *param)
+{
+  GPtrArray *a = param;
+  if (!g_ascii_strncasecmp(k, "password", 8) ||
+      !g_ascii_strcasecmp(k, "pgp_passphrase"))
+    v = "***";
+  g_ptr_array_add(a, g_strdup_printf("%s = %s", k, v));
+}
+
+static void dump_lua_binding(const char *k, void *param)
+{
+  g_ptr_array_add(param, g_strdup_printf("%s = (Lua function)", k));
+}
+
+static gint cmp_strp(gconstpointer a, gconstpointer b)
+{
+  return strcmp(*(const char **)a, *(const char **)b);
+}
+
+//  dump_configuration()
+// Print the options, aliases and key bindings (for "-n").
+static void dump_configuration(void)
+{
+  static const struct { guint type; const char *title; } sections[] = {
+    { SETTINGS_TYPE_OPTION,  "Options" },
+    { SETTINGS_TYPE_ALIAS,   "Aliases" },
+    { SETTINGS_TYPE_BINDING, "Key bindings" },
+  };
+  guint s, i;
+
+  for (s = 0; s < G_N_ELEMENTS(sections); s++) {
+    GPtrArray *a = g_ptr_array_new_with_free_func(g_free);
+    settings_foreach(sections[s].type, dump_setting, a);
+    if (sections[s].type == SETTINGS_TYPE_BINDING)
+      mlua_foreach_binding(dump_lua_binding, a);
+    g_ptr_array_sort(a, cmp_strp);
+    printf("\n# %s\n", sections[s].title);
+    for (i = 0; i < a->len; i++)
+      printf("%s\n", (char *)g_ptr_array_index(a, i));
+    g_ptr_array_free(a, TRUE);
+  }
 }
 
 static void main_init_pgp(void)
@@ -355,18 +411,11 @@ static gboolean mcabber_source_check(GSource *source)
 
 static gboolean keyboard_activity(void)
 {
-  keycode_t kcode;
-
   if (terminate_ui) {
     return FALSE;
   }
   scr_do_update();
-  scr_getch(&kcode);
-
-  while (kcode.value != ERR) {
-    scr_process_key(kcode);
-    scr_getch(&kcode);
-  }
+  scr_process_input();
   scr_check_auto_away(FALSE);
 
   return TRUE;
@@ -392,6 +441,7 @@ int main(int argc, char **argv)
   const char *optstring;
   int optval, optval2;
   int ret;
+  gboolean check_config = FALSE;
 
   credits();
 
@@ -406,18 +456,21 @@ int main(int argc, char **argv)
 
   /* Parse command line options */
   while (1) {
-    int c = getopt(argc, argv, "hVf:");
+    int c = getopt(argc, argv, "hVnf:");
     if (c == -1) {
       break;
     } else
       switch (c) {
       case 'h':
       case '?':
-        printf("Usage: %s [-h|-V|-f mcabberrc_file]\n\n", argv[0]);
+        usage(argv[0]);
         return (c == 'h' ? 0 : -1);
       case 'V':
         compile_options();
         return 0;
+      case 'n':
+        check_config = TRUE;
+        break;
       case 'f':
         configFile = g_strdup(optarg);
         break;
@@ -425,7 +478,7 @@ int main(int argc, char **argv)
   }
 
   if (optind < argc) {
-    fprintf(stderr, "Usage: %s [-h|-V|-f mcabberrc_file]\n\n", argv[0]);
+    usage(argv[0]);
     return -1;
   }
 
@@ -434,6 +487,7 @@ int main(int argc, char **argv)
   cmd_init();
   roster_init();
   settings_init();
+  msgfmt_init();
   scr_init_bindings();
   scr_init_settings();
   caps_init();
@@ -444,14 +498,19 @@ int main(int argc, char **argv)
   scr_init_locale_charset();
   ut_init_debug();
   help_init();
+  mlua_init();
 
-  /* Parsing config file... */
-  ret = cfg_read_file(configFile, TRUE);
+  /* Load the configuration file (Lua) */
+  ret = mlua_load_config(configFile);
   /* free() configFile if it has been allocated during options parsing */
   g_free(configFile);
   /* Leave if there was an error in the config. file */
   if (ret == -2)
     exit(EXIT_FAILURE);
+  if (check_config) {
+    dump_configuration();
+    return ret ? EXIT_FAILURE : EXIT_SUCCESS;
+  }
 
   /* Display configuration settings */
   {
@@ -527,6 +586,8 @@ int main(int argc, char **argv)
   /* Load previous roster state */
   hlog_load_state();
 
+  mlua_emit_simple("ready");
+
   main_context = g_main_context_default();
 
   if (ret < 0) {
@@ -571,10 +632,12 @@ int main(int argc, char **argv)
     g_source_unref(mc_source);
   }
 
+  mlua_emit_simple("quit");
   evs_deinit();
 #ifdef MODULES_ENABLE
   modules_deinit();
 #endif
+  mlua_deinit();
 #ifndef MODULES_ENABLE
   fifo_deinit();
 #endif

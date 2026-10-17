@@ -25,7 +25,7 @@ with contributions to the content.
 \chapter{Basic Usage}
 After installing mcabber, you should create a configuration file first.\\
 The easiest way of doing this is to copy the sample configuration file\cite{samplerc} to
-\~{}/.mcabber/mcabberrc. Then, you only have to change the variable
+\~{}/.config/mcabber-ng/init.lua (it is a Lua script). Then, you only have to change the variable
 \textit{jid} before you can, finally, start mcabber. When the Login is
 successful, mcabber might look similar to the following screenshot:\\
 \begin{figure}[h!]
@@ -138,7 +138,7 @@ metacontacts yet, but at least you can group the history of different contacts t
 This basically works by merging those histories and then creating a symlink frome one to the other.
 Here's an example with the histories of foo\_work@jabber.org ond foo\_home@jabber.org:
 \begin{lstlisting}
-$ cd ~/.mcabber/histo/
+$ cd ~/.config/mcabber-ng/histo/
 $ merge_history.py foo_work@jabber.org foo_home@jabber.org > foo
 $ mv foo foo_home@jabber.org
 $ rm foo_work@jabber.org
@@ -150,7 +150,7 @@ You've got old centericq\cite{centericq} or centerim\cite{centerim} logs and wan
 them in mcabber? There's a script called cicq2mcabber.pl in the contrib directory of the mcabber
 tarball which can be used to do that. Now you only have to figure out where exactly
 centerim saves the history of a particular contact(somewhere under \~{}/.centerim/),
-convert this file to the mcabber history format and save it to \~{}/.mcabber/histo/ with the
+convert this file to the mcabber history format and save it to \~{}/.config/mcabber-ng/histo/ with the
 Jabber ID as the filename.
 \chapter{Scripting}
 This chapter will introduce you to the scripting facilities of mcabber.

@@ -17,20 +17,22 @@ typedef struct {
 void cmd_init(void);
 cmd *cmd_get(const char *command);
 void process_line(const char *line);
+gboolean process_line_allows_newlines(const char *line);
 void process_command(const char *line, guint iscmd);
 char *expandalias(const char *line);
 #ifdef MODULES_ENABLE
 gpointer cmd_del(gpointer id);
+#endif
 gpointer cmd_add(const char *name, const char *help, guint flags1, guint flags2,
                  void (*f)(char*), gpointer userdata);
 gboolean cmd_set_safe(const gchar *name, gboolean safe);
-#endif
 gboolean cmd_is_safe(const gchar *name);
 
 void cmd_room_whois(gpointer bud, const char *nick, guint interactive);
 void cmd_room_leave(gpointer bud, char *arg);
 void cmd_setstatus(const char *recipient, const char *arg);
 void say_cmd(char *arg, int parse_flags);
+int  cmd_send_message(const char *fjid, const char *msg, const char *subj);
 
 #endif /* __MCABBER_COMMANDS_H__ */
 

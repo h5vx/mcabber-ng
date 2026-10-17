@@ -26,6 +26,7 @@
 #include "utils.h"
 #include "utf8.h"
 #include "screen.h"
+#include "msgformat.h"
 
 
 /* This is a private structure type */
@@ -40,11 +41,44 @@ typedef struct {
   // (for ex. when HBB_FLAG_PERSISTENT is set).
   struct { // hbuf_line_info
     time_t timestamp;
-    unsigned mucnicklen;
     guint  flags;
     gpointer xep184;
+    gchar *nick;        // First block of a message only
+    guint headw, contw; // See hbuf_head_fn
   } prefix;
 } hbuf_block_t;
+
+static hbuf_head_fn head_func;
+
+void hbuf_set_head_func(hbuf_head_fn fn)
+{
+  head_func = fn;
+}
+
+//  is_message_start(block)
+// Persistent blocks with prefix flags (other than the readmark) begin a
+// message.
+static inline gboolean is_message_start(hbuf_block_t *b)
+{
+  return (b->flags & HBB_FLAG_PERSISTENT) &&
+         (b->prefix.flags & ~HBB_PREFIX_READMARK);
+}
+
+static void free_block(hbuf_block_t *b)
+{
+  g_free(b->prefix.nick);
+  g_free(b);
+}
+
+//  text_width(width, used)
+// Width available for the text, when "used" cells are used by the head.
+// One column is kept free on the right side.
+static inline unsigned int text_width(unsigned int width, guint used)
+{
+  if (!width)
+    return 0;   // No wrapping
+  return width > used + 1 ? width - used - 1 : 1;
+}
 
 
 //  do_wrap(p_hbuf, first_hbuf_elt, width)
@@ -53,9 +87,21 @@ typedef struct {
 // are created).
 // All hbuf elements are processed, starting from first_hbuf_elt.
 static inline void do_wrap(GList **p_hbuf, GList *first_hbuf_elt,
-                           unsigned int width)
+                           unsigned int full_width)
 {
   GList *curr_elt = first_hbuf_elt;
+  guint contw = 0;
+
+  // If we start inside a message, get its indentation
+  if (curr_elt) {
+    GList *l;
+    for (l = g_list_previous(curr_elt); l; l = g_list_previous(l)) {
+      if (is_message_start(l->data)) {
+        contw = ((hbuf_block_t*)l->data)->prefix.contw;
+        break;
+      }
+    }
+  }
 
   // Let's add non-persistent blocs if necessary
   // - If there are '\n' in the string
@@ -66,12 +112,26 @@ static inline void do_wrap(GList **p_hbuf, GList *first_hbuf_elt,
     char *br = NULL; // break pointer
     char *cr = NULL; // CR pointer
     unsigned int cur_w = 0;
+    unsigned int width;
 
     // We want to break where we can find a space char or a CR
 
     hbuf_b_curr = (hbuf_block_t*)(curr_elt->data);
     hbuf_b_prev = hbuf_b_curr;
     c = hbuf_b_curr->ptr;
+
+    // The head of the message uses some space on the first line, the
+    // following lines are indented.
+    if (is_message_start(hbuf_b_curr)) {
+      if (head_func)
+        head_func(hbuf_b_curr->prefix.timestamp, hbuf_b_curr->prefix.flags,
+                  hbuf_b_curr->prefix.nick, &hbuf_b_curr->prefix.headw,
+                  &hbuf_b_curr->prefix.contw);
+      contw = hbuf_b_curr->prefix.contw;
+      width = text_width(full_width, hbuf_b_curr->prefix.headw);
+    } else {
+      width = text_width(full_width, contw);
+    }
 
     while (*c && (!width || cur_w <= width)) {
       if (*c == '\n') {
@@ -111,18 +171,18 @@ static inline void do_wrap(GList **p_hbuf, GList *first_hbuf_elt,
   }
 }
 
-//  hbuf_add_line(p_hbuf, text, prefix_flags, width, maxhbufblocks)
-// Add a line to the given buffer.  If width is not null, then lines are
-// wrapped at this length.
+//  hbuf_add_line(p_hbuf, text, nick, prefix_flags, width, maxhbufblocks)
+// Add a line to the given buffer.  If width (the width of the window) is
+// not null, then lines are wrapped.
 // maxhbufblocks is the maximum number of hbuf blocks we can allocate.  If
 // null, there is no limit.  If non-null, it should be >= 2.
 //
 // Note 1: Splitting according to width won't work if there are tabs; they
 //         should be expanded before.
 // Note 2: width does not include the ending \0.
-void hbuf_add_line(GList **p_hbuf, const char *text, time_t timestamp,
-        guint prefix_flags, guint width, guint maxhbufblocks,
-        unsigned mucnicklen, gpointer xep184)
+void hbuf_add_line(GList **p_hbuf, const char *text, const char *nick,
+        time_t timestamp, guint prefix_flags, guint width,
+        guint maxhbufblocks, gpointer xep184)
 {
   GList *curr_elt;
   char *line;
@@ -139,12 +199,12 @@ void hbuf_add_line(GList **p_hbuf, const char *text, time_t timestamp,
   hbuf_block_elt = g_new0(hbuf_block_t, 1);
   hbuf_block_elt->prefix.timestamp  = timestamp;
   hbuf_block_elt->prefix.flags      = prefix_flags;
-  hbuf_block_elt->prefix.mucnicklen = mucnicklen;
+  hbuf_block_elt->prefix.nick       = g_strdup(nick);
   hbuf_block_elt->prefix.xep184     = xep184;
   if (!*p_hbuf) {
     hbuf_block_elt->ptr  = g_new(char, hbb_blocksize);
     if (!hbuf_block_elt->ptr) {
-      g_free(hbuf_block_elt);
+      free_block(hbuf_block_elt);
       return;
     }
     hbuf_block_elt->flags  = HBB_FLAG_ALLOC | HBB_FLAG_PERSISTENT;
@@ -206,7 +266,7 @@ void hbuf_add_line(GList **p_hbuf, const char *text, time_t timestamp,
                 g_free(hbuf_b_elt->ptr);
               }
             }
-            g_free(hbuf_b_elt);
+            free_block(hbuf_b_elt);
             hbuf_head = *p_hbuf = g_list_delete_link(hbuf_head, hbuf_elt);
           }
           n--;
@@ -243,7 +303,7 @@ void hbuf_free(GList **p_hbuf)
     if (hbuf_b_elt->flags & HBB_FLAG_ALLOC) {
       g_free(hbuf_b_elt->ptr);
     }
-    g_free(hbuf_b_elt);
+    free_block(hbuf_b_elt);
   }
 
   g_list_free(first_elt);
@@ -273,7 +333,7 @@ void hbuf_rebuild(GList **p_hbuf, unsigned int width)
     // Is next line not-persistent?
     if (!(hbuf_b_next->flags & HBB_FLAG_PERSISTENT)) {
       hbuf_b_curr->ptr_end = hbuf_b_next->ptr_end;
-      g_free(hbuf_b_next);
+      free_block(hbuf_b_next);
       curr_elt = g_list_delete_link(curr_elt, next_elt);
     } else
       curr_elt = next_elt;
@@ -317,6 +377,7 @@ hbb_line **hbuf_get_lines(GList *hbuf, unsigned int n)
   GList *last_persist;  // last persistent flags
   hbb_line **array, **array_elt;
   hbb_line *prev_array_elt = NULL;
+  guint contw = 0;
 
   // To be able to correctly highlight multi-line messages,
   // we need to look at the last non-null prefix, which should be the first
@@ -330,6 +391,7 @@ hbb_line **hbuf_get_lines(GList *hbuf, unsigned int n)
       // or a persistent line with a readmark flag (or both).
       if (blk->prefix.flags & ~HBB_PREFIX_READMARK) { // First message line
         last_persist_prefixflags |= blk->prefix.flags;
+        contw = blk->prefix.contw;
         break;
       } else { // Not the first line, but we need to keep the readmark flag
         last_persist_prefixflags = blk->prefix.flags;
@@ -350,14 +412,16 @@ hbb_line **hbuf_get_lines(GList *hbuf, unsigned int n)
       *array_elt = (hbb_line*)g_new(hbb_line, 1);
       (*array_elt)->timestamp  = blk->prefix.timestamp;
       (*array_elt)->flags      = blk->prefix.flags;
-      (*array_elt)->mucnicklen = blk->prefix.mucnicklen;
+      (*array_elt)->nick       = blk->prefix.nick;
+      (*array_elt)->headw      = blk->prefix.headw;
+      (*array_elt)->contw      = blk->prefix.contw;
       (*array_elt)->text       = g_strndup(blk->ptr, maxlen);
 
-      if ((blk->flags & HBB_FLAG_PERSISTENT) &&
-          (blk->prefix.flags & ~HBB_PREFIX_READMARK)) {
+      if (is_message_start(blk)) {
         // This is a new message: persistent block flag and no prefix flag
         // (except a possible readmark flag)
         last_persist_prefixflags = blk->prefix.flags;
+        contw = blk->prefix.contw;
       } else {
         // Propagate highlighting flags
         (*array_elt)->flags |= last_persist_prefixflags &
@@ -366,7 +430,8 @@ hbb_line **hbuf_get_lines(GList *hbuf, unsigned int n)
                                 HBB_PREFIX_READMARK);
         // Continuation of a message - omit the prefix
         (*array_elt)->flags |= HBB_PREFIX_CONT;
-        (*array_elt)->mucnicklen = 0; // The nick is in the first one
+        (*array_elt)->nick = NULL;  // The nick is in the first one
+        (*array_elt)->headw = (*array_elt)->contw = contw;
 
         // If there is a readmark on this line, update last_persist_prefixflags
         if (blk->flags & HBB_FLAG_PERSISTENT)
@@ -468,9 +533,8 @@ void hbuf_dump_to_file(GList *hbuf, const char *filename)
 {
   hbuf_block_t *blk;
   hbb_line line;
-  guint last_persist_prefixflags = 0;
-  guint prefixwidth;
-  char pref[96];
+  guint contw = 0;
+  gchar *pref;
   FILE *fp;
   struct stat statbuf;
 
@@ -484,9 +548,6 @@ void hbuf_dump_to_file(GList *hbuf, const char *filename)
     return;
   }
 
-  prefixwidth = scr_getprefixwidth();
-  prefixwidth = MIN(prefixwidth, sizeof pref);
-
   for (hbuf = g_list_first(hbuf); hbuf; hbuf = g_list_next(hbuf)) {
     int maxlen;
 
@@ -496,24 +557,19 @@ void hbuf_dump_to_file(GList *hbuf, const char *filename)
     memset(&line, 0, sizeof(line));
     line.timestamp  = blk->prefix.timestamp;
     line.flags      = blk->prefix.flags;
-    line.mucnicklen = blk->prefix.mucnicklen;
+    line.nick       = blk->prefix.nick;
     line.text       = g_strndup(blk->ptr, maxlen);
 
-    if ((blk->flags & HBB_FLAG_PERSISTENT) &&
-        (blk->prefix.flags & ~HBB_PREFIX_READMARK)) {
-      last_persist_prefixflags = blk->prefix.flags;
+    if (is_message_start(blk)) {
+      contw = blk->prefix.contw;
+      pref = msgfmt_head_text(line.timestamp, line.flags, line.nick);
     } else {
-      // Propagate necessary highlighting flags
-      line.flags |= last_persist_prefixflags &
-                    (HBB_PREFIX_HLIGHT_OUT | HBB_PREFIX_HLIGHT |
-                     HBB_PREFIX_INFO | HBB_PREFIX_IN);
-      // Continuation of a message - omit the prefix
-      line.flags |= HBB_PREFIX_CONT;
-      line.mucnicklen = 0; // The nick is in the first one
+      pref = g_strnfill(contw, ' ');
     }
 
-    scr_line_prefix(&line, pref, prefixwidth);
     fprintf(fp, "%s%s\n", pref, line.text);
+    g_free(pref);
+    g_free(line.text);
   }
 
   fclose(fp);

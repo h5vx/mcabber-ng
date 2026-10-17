@@ -5,6 +5,8 @@
  /ILINE hist_beginning_search_bwd|hist_beginning_search_fwd
  /ILINE hist_prev|hist_next
  /ILINE iline_start|iline_end|iline_fdel|iline_bdel
+ /ILINE buffer_start|buffer_end|newline
+ /ILINE line_up_or_hist|line_down_or_hist
  /ILINE iline_accept|iline_accept_down_hist
  /ILINE iline_insert
  /ILINE clear_history
@@ -46,13 +48,23 @@ Polecenia do zarządzania linią komend.
 /iline hist_next
  Następna linia z historii
 /iline iline_start
- Przechodzi na początek linii
+ Przejście na początek bieżącej linii
 /iline iline_end
- Przechodzi na koniec linii
+ Przejście na koniec bieżącej linii
 /iline iline_fdel
- Kasuje znaki od aktualnej pozycji kursora do końca linii
+ Usuwa tekst od kursora do końca linii (na końcu linii łączy ją z następną)
 /iline iline_bdel
- Kasuje znaki od początku linii do aktualnej pozycji kursora
+ Usuwa tekst od początku linii do kursora (na początku linii łączy ją z poprzednią)
+/iline buffer_start
+ Przejście na początek pola wprowadzania (pierwsza linia)
+/iline buffer_end
+ Przejście na koniec pola wprowadzania (ostatnia linia)
+/iline newline
+ Wstawia znak nowej linii: wiadomość będzie wielolinijkowa
+/iline line_up_or_hist
+ Przejście do poprzedniej linii pola wprowadzania, a w pierwszej linii wyszukiwanie wstecz w historii
+/iline line_down_or_hist
+ Przejście do następnej linii pola wprowadzania, a w ostatniej linii wyszukiwanie w przód w historii
 /iline iline_accept
  Akceptuje wprowadzoną linię
 /iline iline_accept_down_hist

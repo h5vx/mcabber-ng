@@ -1,0 +1,5 @@
+
+ /MEMBERS [show|hide|toggle]
+
+Show or hide the list of the members of the current room.
+The muc_members option sets where it is displayed: "column" (next to the chat window), "overlay" (over the chat window) or "none".

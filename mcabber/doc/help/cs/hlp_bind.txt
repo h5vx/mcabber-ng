@@ -1,17 +1,19 @@
 
- /BIND [kód_klávesy [= příkazový_řádek]]
+ /BIND [klávesa [= příkaz]]
 
-Sváže příkaz s klávesou s kódem 'kód_klávesy'. Pro zjištění, které klávesy nejsou zatím použity, stačí stisknout zkoumanou klávesu a podívat se do stavového okna. Například "Unknown key=265" znamená, že je možno svázat nějaký příkaz s klávesou #265.
+Přiřadí příkaz kombinaci kláves.  Klávesy se zadávají jménem, např. "Alt+j", "Ctrl+Left", "F5" nebo "Ctrl+Shift+PgUp".  Jméno klávesy zjistíte jejím stisknutím: u nepřiřazených kláves se v okně záznamu objeví zpráva jako "Unknown key: Alt+j".
 
 /bind
- Zobrazí přehled aktuálních vazeb.
-/bind kód_klávesy
- Vypíše příkazový řádek svázaný s danou klávesou.
-/bind kód_klávesy=
- Odstraní vazbu klávesy s kódem 'kód_klávesy'.
-/bind kód_klávesy = příkazový_řádek
- Sváže 'příkazový_řádek' s klávesou s kódem 'kód_klávesy'.
+ Zobrazí seznam přiřazení
+/bind klávesa
+ Zobrazí příkaz přiřazený klávese
+/bind klávesa =
+ Zruší přiřazení klávesy
+/bind klávesa = příkaz
+ Přiřadí klávese příkaz
 
-Příklad: "/bind 265 = status away" (265 je kód pro klávesu F1).
-Poznámka: Kódy kláves se mohou lišit v závislosti na konfiguraci ncurses.
-Tip: Místo příkazů je možno použít i aliasy.
+Modifikátory: Ctrl (C), Alt (Meta, M), Shift (S), spojené znakem "+" nebo "-".
+Pojmenované klávesy: Enter, Tab, Backspace, Esc, Space, Up, Down, Left, Right, Home, End, PgUp, PgDn, Ins, Del, F1..F63, WheelUp, WheelDown.  Každá jiná klávesa je jeden znak: "Alt+j", "Alt+č", "Ctrl+=".
+Příklad: "/bind F5 = roster toggle_offline"
+Poznámka: terminál nerozlišuje některé kombinace (Ctrl+i je Tab, Ctrl+m je Enter).
+Tip: místo příkazů lze použít i aliasy.

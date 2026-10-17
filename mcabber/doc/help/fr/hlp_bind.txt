@@ -1,17 +1,19 @@
 
- /BIND [keycode [= command line]]
+ /BIND [touche [= ligne de commande]]
 
-Cette commande permet de gérer les raccourcis clavier. Pour trouver le code d'une touche non-utilisée, pressez la touche en question et regardez la fenêtre de logs de mcabber. Par exemple: "Unknown key=265" signifie que la touche de code 265 (F1 en général) est disponible.
+Associe une ligne de commande à une combinaison de touches.  Les touches sont désignées par leur nom, par exemple "Alt+j", "Ctrl+Left", "F5" ou "Ctrl+Shift+PgUp".  Pour connaître le nom d'une touche, appuyez dessus : pour les touches non associées, un message comme "Unknown key: Alt+j" est affiché dans la fenêtre de log.
 
 /bind
- Affiche la liste des raccourcis existants
-/bind keycode
- Affiche la commande associée à la touche spécifiée
-/bind keycode=
- Supprime le raccourci de la touche spécifiée
-/bind keycode = command line
- Associe "command line" à la touche de code "keycode"
+ Affiche la liste des associations
+/bind touche
+ Affiche la ligne de commande associée à cette touche
+/bind touche =
+ Supprime l'association de la touche
+/bind touche = ligne de commande
+ Associe la ligne de commande à la touche
 
-Exemple : "/bind 265 = status away" (265 est F1).
-Remarque : les codes peuvent différer en fonction de l'installation ncurses.
-Astuce : des alias peuvent également être utilisés.
+Modificateurs : Ctrl (C), Alt (Meta, M), Shift (S), séparés par "+" ou "-".
+Touches nommées : Enter, Tab, Backspace, Esc, Space, Up, Down, Left, Right, Home, End, PgUp, PgDn, Ins, Del, F1..F63, WheelUp, WheelDown.  Toute autre touche est un caractère : "Alt+j", "Alt+é", "Ctrl+=".
+Exemple : "/bind F5 = roster toggle_offline"
+Note : le terminal ne distingue pas certaines combinaisons (Ctrl+i est Tab, Ctrl+m est Enter).
+Astuce : les alias peuvent être utilisés à la place des commandes.

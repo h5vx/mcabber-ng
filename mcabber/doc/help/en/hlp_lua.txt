@@ -1,0 +1,10 @@
+
+ /LUA code
+
+Run Lua code.  If the code is an expression, its value is printed.
+The "mc" table gives access to mcabber-ng (see the CONFIGURATION FILE section of the manual page).
+
+Examples:
+ /lua 1+1
+ /lua mc.get("roster_width")
+ /lua mc.bind("Alt+s", function() mc.print("Hello") end)

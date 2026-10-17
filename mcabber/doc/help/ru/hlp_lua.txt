@@ -1,0 +1,10 @@
+
+ /LUA код
+
+Выполняет код на Lua.  Если код является выражением, выводится его значение.
+Таблица "mc" даёт доступ к mcabber-ng (см. раздел CONFIGURATION FILE страницы руководства).
+
+Примеры:
+ /lua 1+1
+ /lua mc.get("roster_width")
+ /lua mc.bind("Alt+s", function() mc.print("Привет") end)

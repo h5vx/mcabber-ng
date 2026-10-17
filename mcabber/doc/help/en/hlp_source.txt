@@ -1,4 +1,4 @@
 
  /SOURCE pattern
 
-Read configuration files, that match glob pattern (sorted in alphabetical order).
+Run the Lua files matching the glob pattern (sorted in alphabetical order).

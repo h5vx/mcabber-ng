@@ -1,21 +1,23 @@
-MCABBER(1)
-===========
+MCABBER-NG(1)
+=============
 Mikael BERTHE <mcabber@lilotux.net>
-v1.1.3-dev, October 2021
+v0.1.0-dev, October 2026
 
 NAME
 ----
-mcabber - a simple Jabber (XMPP) console client
+mcabber-ng - a Jabber (XMPP) console client configured in Lua
 
 SYNOPSIS
 --------
-'mcabber' [ -h | -V | -f configfile ]
+'mcabber-ng' [ -h | -V | -n ] [ -f configfile ]
 
 DESCRIPTION
 -----------
-`mcabber(1)` is a small Jabber (XMPP) console client. +
+`mcabber-ng` is a small Jabber (XMPP) console client, based on `mcabber`. +
 For now it needs a configuration file to start, so please copy the sample
-mcabberrc file and adapt your connection settings.
+init.lua file to $XDG_CONFIG_HOME/mcabber-ng/init.lua (usually
+~/.config/mcabber-ng/init.lua) and adapt your connection settings.  The
+configuration file is a Lua script, see the CONFIGURATION FILE section.
 
 You also need to have an existing Jabber account to use this software, as
 it cannot (un)register accounts yet.
@@ -48,7 +50,13 @@ OPTIONS
         Displays `mcabber` version and compile-time definitions.
 
 -f configfile::
-        Use configuration file 'configfile'
+        Use configuration file 'configfile'.  The directory of this file is
+        used as the configuration directory.
+
+-n::
+        Load the configuration file, print the resulting options, aliases and
+        key bindings, and exit.  The exit status is not zero if the
+        configuration file cannot be loaded.
 
 WINDOWS/PANES
 -------------
@@ -85,7 +93,17 @@ PageUp and PageDown keys are used to move in the roster.
 
 Up and Down arrow keys can be used to move in the input line history; they
 jump to the previous/next line from the history beginning with the same string
-(from first column to the cursor column).
+(from first column to the cursor column).  When the input line has several
+rows, they move the cursor between the rows first.
+
+Messages can have several lines: Alt+Enter (or Ctrl+j) inserts a line break,
+and Enter sends the whole message.  The input line grows as needed (see the
+'input_max_rows' option).
+
+Pasted text is not sent line by line: it is inserted in the input line, and
+Enter sends it as one message.  Pasting is detected with the terminal
+"bracketed paste" mode, or, when the terminal doesn't support it, when many
+keys including Enter are received at once.  See the 'paste_mode' option.
 
 To send a message, move to the chosen buddy in the buddylist, type your
 message and hit enter.  If the line begins with a slash, this will be
@@ -95,10 +113,13 @@ leave the chat mode.
 Here is a quick description of the default key bindings:
 
 Esc::           Disable chat mode
-Ctrl-a::        Go to the beginning of the input line
-Ctrl-e::        Go to the end of the input line
+Enter::         Send the message (or run the command)
+Alt+Enter, Ctrl-j:: Insert a line break
+Ctrl-a, Home::  Go to the beginning of the current line
+Ctrl-e, End::   Go to the end of the current line
+Ctrl-Home/Ctrl-End:: Go to the beginning/end of the input buffer
 Ctrl-l::        Force a refresh
-Up/Down::       Move in the input line history
+Up/Down::       Move between the rows of the input line, or in the input line history
 PgUp/PgDown::   Move inside the roster (buddylist)
 Tab::           Complete current word, in the input line
 Ctrl-g::        Cancel completion
@@ -107,8 +128,8 @@ Ctrl-d::        Send/terminate a multi-line message
 Ctrl-p/Ctrl-n:: Scroll up/down half a screen in the buffer window (chat mode)
 Ctrl-Left::     Move the cursor back to the start of the current or previous word
 Ctrl-Right::    Move the cursor forward to the end of the current or next word
-Ctrl-u::        Delete from beginning of the line to the cursor
-Ctrl-k::        Delete from the cursor to the end of line
+Ctrl-u::        Delete from beginning of the line to the cursor (or join the line with the previous one)
+Ctrl-k::        Delete from the cursor to the end of line (or join the line with the next one)
 Ctrl-w::        Backward kill word
 Ctrl-t::        Transpose chars
 Ctrl-o::        Accept line and put the next history line in the input line (accept-line-and-down-history)
@@ -243,16 +264,15 @@ COMMANDS RELATED TO MCABBER
         'request';;  Request a subscription to the buddy's presence updates
         'request_unsubscribe';;  Request unsubscription from the buddy's presence updates
 
-/bind [keycode [= command line]]::
-        Bind the command to the key given as "keycode".  To examine which keys are currently not used look at `mcabber` log window and press examined key.  For example: "Unknown key=265" means that you can bind some command to key #265.
+/bind [key [= command line]]::
+        Bind the command line to a key combination.  Keys are given by name, like "Alt+j", "Ctrl+Left", "F5" or "Ctrl+Shift+PgUp" (see KEY NAMES below).  To find the name of a key, press it: unbound keys are reported in the log window, for example "Unknown key: Alt+j".
 
         (without arguments);;  Display list of current bindings
-        'keycode';;  Display the command line bound to this key
-        'keycode'=;;  Unbind key with code "keycode"
-        'keycode' = command line;;  Bind "command line" to the key with code "keycode"
+        'key';;  Display the command line bound to this key
+        'key' =;;  Remove the binding of "key"
+        'key' = command line;;  Bind "command line" to the key
 
-        Example: "/bind 265 = status away" (265 is F1). +
-        Note: keycodes can be different depending on your ncurses configuration. +
+        Example: "/bind F5 = roster toggle_offline" +
         Tip: aliases also can be used instead of commands.
 
 /buffer clear|close|close_all|purge|list::
@@ -391,7 +411,7 @@ COMMANDS RELATED TO MCABBER
         In multi-line mode, each line (except command lines) typed in the input line will be added to the multi-line message.  Once the message is finished, it can be sent to the current selected buddy with the "/msay send" command. +
         The 'begin' subcommand enables multi-line mode.  Note that it allows a message subject to be specified. +
         The 'verbatim' multi-line mode disables commands, so that it is possible to enter lines starting with a slash.  Only the "/msay" command (with send or abort parameters) can be used to exit verbatim mode. +
-        The 'toggle' subcommand can be bound to a key to use the multi-line mode quickly (for example, "bind M13 = msay toggle" to switch using the Meta-Enter combination).
+        The 'toggle' subcommand can be bound to a key to use the multi-line mode quickly (for example, "bind Alt+m = msay toggle"; Alt+Enter inserts a line break).
 
         'begin' [subject];;  Enter multi-line mode
         'verbatim';;  Enter verbatim multi-line mode
@@ -535,7 +555,7 @@ COMMANDS RELATED TO MCABBER
         Without arguments prints a list of all set options with their values
 
 /source pattern::
-        Read configuration files, that match glob pattern (sorted in alphabetical order).
+        Run the Lua files that match the glob pattern (sorted in alphabetical order).
 
 /status [online|avail|free|dnd|notavail|away [-|statusmessage]]::
 /status message -|statusmessage::
@@ -553,23 +573,333 @@ COMMANDS RELATED TO MCABBER
         Note: this status will be overridden by subsequent "/status" commands.  If you are using the auto-away feature, the status will overridden too. +
         Note: The jid can include a resource (i.e. \user@server/resource).
 
+/members [show|hide|toggle]::
+        Show or hide the members of the current room (see USER INTERFACE).
+
+/console [show|hide|toggle|clear]::
+        Display the XMPP console (see USER INTERFACE).  'clear' empties it.
+
 /version::
         Display current version of mcabber.
 
 CONFIGURATION FILE
 ------------------
-See the provided sample configuration file, which should be self-documenting.
+The configuration file, $XDG_CONFIG_HOME/mcabber-ng/init.lua by default, is a
+Lua script (Lua 5.1 / LuaJIT).  The provided sample configuration file
+(init.lua.example) documents all the options.  The `mc` table (also available
+with require "mcabber") gives access to mcabber-ng:
+
+mc.set { name = value, ... }, mc.set(name, value)::
+        Set options.  Values can be strings, numbers or booleans (true is 1,
+        false is 0); nil removes the option.  mc.opt.name = value is
+        equivalent, and mc.opt.name or mc.get(name) read an option (as a
+        string).
+
+mc.alias { name = "command line", ... }, mc.alias(name, command)::
+        Define command aliases.
+
+mc.bind { [key] = command, ... }, mc.bind(key, command)::
+        Bind keys (see KEY NAMES) to command lines or to Lua functions.  A
+        function receives a table with the key name ('key' field).
+        mc.unbind(key) removes a binding, mc.bindings() returns all of them,
+        mc.key_name(name) returns the canonical name of a key.
+
+mc.command(command line)::
+        Run a mcabber command (the leading slash is optional).  While the
+        configuration file is loaded, only "safe" commands can be used (set,
+        bind, alias, pgp, source, status, color, otrpolicy, module).
+
+mc.color.roster(statuses, jid, color), mc.color.muc(room, mode), mc.color.mucnick(nick, color)::
+        Coloring rules, see the /color command.
+
+mc.module.load(name), mc.module.unload(name)::
+        Load or unload a module.
+
+mc.status(status [, message])::
+        Set your status.
+
+mc.timer(milliseconds, function [, repeat])::
+        Call the function after the delay (repeatedly if 'repeat' is true,
+        until the function returns false).  Returns an id for mc.cancel(id).
+
+mc.on(event, function(ev) ... end [, { priority = n }])::
+        Run a function when an event occurs (see EVENTS below).  Returns an
+        id for mc.off(id).  Handlers with a lower priority run first (default
+        0).  A handler can return mc.DROP (or false) to drop the event when
+        possible, or mc.STOP to stop running the other handlers.
+
+mc.send(jid, text [, { subject = "..." }]), mc.say(text)::
+        Send a message to a contact (or a room), or to the current buddy.
+
+mc.buddy.current()::
+        Information about the selected buddy: a table with the 'jid',
+        'name', 'type' ("user", "room", "agent", "group", "special"),
+        'status' and 'resource' fields, or nil.
+
+mc.input.get(), mc.input.set(text), mc.input.insert(text)::
+        Read, replace or insert text in the input line.
+
+mc.print(...), mc.log(...), mc.debug(...)::
+        Print to the log window (mc.log also writes to the trace log file,
+        mc.debug only when debugging is enabled).
+
+mc.shell_quote(text)::
+        Quote a string for the shell.  Texts coming from the network
+        (messages, nicknames...) must always be quoted before being passed to
+        os.execute() or io.popen().
+
+mc.version, mc.config_dir, mc.config_file::
+        The mcabber-ng version, configuration directory and file.
+
+Other Lua files can be loaded with require(): <config dir>/lua/ is in the
+module search path.  The '/lua' command runs Lua code at runtime ("/lua 1+1"
+prints 2) and '/source' runs a Lua file.
+
+EVENTS
+------
+Handlers receive a table describing the event.  Times are Unix timestamps,
+statuses are "online", "free", "dnd", "notavail", "away", "invisible" or
+"offline".
+
+message_in::
+        A message has been received, before it is displayed and logged.
+        Fields: jid, resource, nick (rooms), text, muc (room message),
+        private (private message from a room participant), time, delayed,
+        carbon, error, encrypted ("pgp", "otr" or nil).  The handlers can
+        change 'text'.  mc.DROP drops the message.
+
+message_received::
+        A message has been displayed.  Same fields as message_in, plus
+        attention, highlight (your nick is in a room message), own (your
+        message in a room), active (the window of this contact is open).
+
+message_send::
+        A message is about to be sent.  Fields: jid, bare_jid, text,
+        subject, muc, private.  The handlers can change 'text' and
+        'subject'.  mc.DROP cancels the message.
+
+message_out::
+        A message has been sent.  Fields: jid, nick, text, muc, private,
+        time, carbon (sent by another client), encrypted.
+
+status::
+        The status of a contact has changed.  Fields: jid, resource, old,
+        new, message, priority, time.
+
+my_status::
+        Your status has changed.  Fields: old, new, message.
+
+connect, disconnect::
+        After the connection (when the roster has been received), before
+        the disconnection.
+
+unread::
+        The number of unread buffers has changed.  Fields: unread,
+        attention, muc_unread, muc_attention.
+
+subscription::
+        A subscription request or answer has been received.  Fields: type
+        ("subscribe", "unsubscribe", "subscribed", "unsubscribed"), jid,
+        message.  mc.DROP ignores it.
+
+receipt::
+        A message delivery receipt has been received.  Fields: jid, id.
+
+ready, quit::
+        The user interface is ready (before connecting), mcabber-ng is
+        exiting.
+
+hook-*::
+        Hooks run by modules; the fields are the hook arguments (strings).
+
+Lua code called by mcabber-ng (handlers, key bindings, timers) must finish
+within 'lua_timeout_ms' milliseconds (default 2000, 0 disables the check).
+The LuaJIT compiler is disabled because compiled code cannot be interrupted;
+call jit.on() in the configuration file to enable it.
+
+MESSAGE FORMAT
+--------------
+The text displayed before each message (the "head": time, direction mark,
+nickname...) can be changed with mc.format:
+
+mc.format.message::
+        A template for all messages, a table of templates per kind of
+        message ("in", "out", "info", "error", "special" for the status
+        window, "default"), or a Lua function (see below).
+
+mc.format.time::
+        The default time format (strftime(3) format), e.g. "%H:%M".  By
+        default it depends on the 'time_prefix' option.
+
+mc.format.indent::
+        Indentation of the following lines of a message (number of
+        columns).  By default they are aligned with the text of the first
+        line.
+
+Templates contain text and fields:
+
+    {field}          value of the field
+    {field:10}       padded to 10 columns ({field:>10} on the right,
+                     {field:^10} centered); {field:.10} truncated
+    {time:%H:%M}     time with a specific format
+    {?field}...{/}   text used only if the field is set ({!field}...{/}
+                     if it is not set)
+    {#style}         the following text uses this style (general, msgin,
+                     msgout, msghl, info, timestamp, readmark, status,
+                     roster, nick for the color of the nickname...); {#}
+                     returns to the color of the line
+    {{ and }}        braces
+
+Fields: time, mark (the original "<==", "-->", "***"...), nick (sender in
+rooms and for actions, contact or own username otherwise), kind, and the
+flags me (action, "/me"), muc, private (private message in a room),
+delayed, receipt (waiting for a receipt), carbon, highlight, own (your
+message in a room), pgp, otr, encrypted, in, out, info, error, special.
+
+The default format is:
+
+    {?delayed}{#timestamp}{/}{time}{#} {mark} {?private}PRIV#<{nick}> {/}
+    {?me}{#nick}*{nick}{#} {/}{?muc}{!me}{#nick}<{nick}>{#} {/}{/}
+
+(without the line break).  A Lua function receives a table with the fields
+(time is a number) and returns a string, a list of segments ("text" or
+{ "text", "style" }), or nil to use the default format.  Example:
+
+    mc.format.message = {
+      default = "{time:%H:%M} {#nick}{nick:>10.10}{#} | ",
+      info = "{time:%H:%M}            * ",
+    }
+
+USER INTERFACE
+--------------
+Input line::
+        The input line is below the chat window ('input_position' option:
+        "chat", the default, or "bottom" for the bottom of the screen, as
+        in the original mcabber).
+
+Members of a room::
+        The members of the current room are displayed next to the chat
+        window ('muc_members' option: "column", the default; "overlay" to
+        display them over the chat window, using only the needed height;
+        "none").  'muc_members_width' sets the width (default 20),
+        'muc_members_left' puts the column on the left.  The /members
+        command shows or hides the list.  mc.format.members formats the
+        items (fields: name, role, role_char, affil, status, icon, self).
+
+XMPP console::
+        /console displays the XML stream (the SASL credentials are masked).
+        While the console is displayed, text typed in the input line is
+        sent to the server as raw XML (commands still work).
+
+Frames::
+        The 'ui_borders' option draws frames around the windows: "rounded",
+        "single", "double", "heavy", "ascii" or "none" (default).  The titles
+        of the roster and log frames are set by 'ui_title_roster' and
+        'ui_title_log'; the chat status line is displayed in the frame above
+        the chat window.  Changes are applied by /screen_refresh (Ctrl-l).
+
+Roster and status lines::
+        mc.format.roster (a template, or a table of templates for
+        "contact", "room", "group" and "special" items, or a function),
+        mc.format.chat_status and mc.format.main_status change the roster
+        items and the status lines (see MESSAGE FORMAT for the templates;
+        \{name:*} uses the available width and {>} aligns the rest on the
+        right).  mc.format.icons is a table of status icons (online, free,
+        away, notavail, dnd, invisible, offline, unknown, room, room_out).
+
+        Roster fields: name, jid, status, status_char, icon, pending (the
+        "#", "+", "." or attention sign), unread (count), count (members of
+        a folded group), type, selected, folded, msg, composing, paused,
+        sub_from, sub_to.
+
+        Chat status fields: name, jid, resource, type, type_name, status,
+        status_char, icon, msg (status message or room topic), chatstate
+        (active, composing, paused, inactive, gone), chatmode, locked,
+        unread.
+
+        Main status fields: unread (sign), status, status_char, icon, info,
+        msg, jid.
+
+Input prompt::
+        mc.format.input_prompt is displayed before the input line (it uses at
+        most a third of the width).  Fields: name, jid, type (of the current
+        buddy), chatmode, command (the line is a command), multiline (/msay
+        mode).
+
+        Style names can contain fields: {#status_$status} uses the
+        status_online, status_away... styles.
+
+Themes::
+        Themes are provided as Lua modules, for example
+        mc.theme(require "mcabber.themes.modern").  The status line of the
+        modern theme is made of rounded "islands" drawn with Powerline
+        glyphs (a Nerd Font is needed); other characters can be used with
+        mc.theme(require("mcabber.themes.modern").with { caps = { "▐", "▌" } })
+        or no caps with { caps = false }.  Available themes: modern,
+        classic (the original look), and the color themes of the original
+        mcabber: colorcli, light, light2, mikael-256, oliver.  A theme is a
+        Lua table of styles, with 'options' and 'format' sections and an
+        optional 'setup' function (see STYLES AND THEMES); it can be written
+        in <config dir>/lua/.
+
+STYLES AND THEMES
+-----------------
+Colors and text attributes are defined by styles:
+
+    mc.style("msgin", "fg=#c0caf5 bg=default")
+    mc.style("timestamp", { fg = "#565f89", italic = true })
+    mc.theme { general = "white", status = "black on cyan bold", ... }
+
+A style is a string of words: a foreground color, "on" and a background
+color, "fg=COLOR", "bg=COLOR", and attributes (bold, dim, italic,
+underline, reverse, blink, standout); or a table with the 'fg' and 'bg'
+fields and boolean attributes.  Colors are default, black, red, green,
+yellow, blue, magenta, cyan, white (optionally prefixed by "bright"), a
+palette number (0-255) or "#rrggbb".  Colors are approximated when the
+terminal has less colors.  24-bit colors are used if the terminal supports
+them (e.g. TERM=xterm-direct); the 'ui_colors' option ("auto", "8", "16",
+"256" or "truecolor") overrides the detection.
+
+The styles of the interface are: general, msgin, msgout, msghl, info,
+timestamp, readmark, status (status lines), log, roster, rostersel
+(selected item), rosterselmsg, rosternewmsg, border, title, title_active,
+roster_group, roster_unread, status_online, status_free, status_away,
+status_notavail, status_dnd, status_invisible, status_offline, badge,
+nick_self, input, input_prompt.  The "background", "bgstatus" and
+"bgrostersel" entries are background colors.  Any other name can be
+defined and used in formats ({#name}).  The old color_* options still
+work for the first ones.
+
+mc.theme(t) sets the styles of the table t; its optional 'options' and
+'format' fields are passed to mc.set and mc.format.
+
+KEY NAMES
+---------
+A key combination is written with modifiers joined to the key by plus
+signs, like "Ctrl+Alt+Left".  Modifiers are Ctrl (or C), Alt (or Meta, M)
+and Shift (or S); a minus sign can be used instead of the plus sign
+("M-j").  Names are not case-sensitive, except single characters.
+
+Named keys are: Enter, Tab, Backspace, Esc, Space, Up, Down, Left, Right,
+Home, End, PgUp, PgDn, Ins, Del, Begin, F1 to F63, WheelUp, WheelDown.  Any
+other key is a single character, like "Alt+j", "Alt+ж", "Ctrl+=" or "Alt+-"
+("Alt+Plus" for the plus sign).
+
+Some combinations cannot be told apart by terminals: Ctrl+i is Tab, Ctrl+m
+is Enter, Ctrl+[ is Esc, and Shift with a letter is the uppercase letter
+("Alt+Shift+j" is "Alt+J").  Combinations like Ctrl+Enter or Shift+Enter
+are only available with terminals that report them (CSI u / modifyOtherKeys).
 
 FILES
 -----
 The following files can be used by `mcabber(1)`:
 
-    $HOME/.mcabber/mcabberrc    Default configuration file
-    $HOME/.config/mcabber/mcabberrc Alternate location (can use XDG_CONFIG_HOME)
-    $HOME/.mcabberrc            Configuration file used if no other has been found
-    $HOME/.mcabber/histo/       Default directory for storing chat history files, if enabled
-    /usr/share/mcabber/help/    Default directory for online help files
-    /usr/lib/mcabber/           Default directory for modules
+    $HOME/.config/mcabber-ng/init.lua   Default configuration file (uses XDG_CONFIG_HOME)
+    $HOME/.config/mcabber-ng/lua/       Lua modules directory (for require)
+    $HOME/.config/mcabber-ng/histo/     Default directory for storing chat history files, if enabled
+    /usr/share/mcabber-ng/help/         Default directory for online help files
+    /usr/share/mcabber-ng/init.lua.example  Sample configuration file
+    /usr/lib/mcabber-ng/                Default directory for modules
 
 BUGS
 ----

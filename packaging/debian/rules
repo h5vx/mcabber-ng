@@ -1,0 +1,15 @@
+#!/usr/bin/make -f
+
+%:
+	dh $@
+
+override_dh_auto_configure:
+	dh_auto_configure -- --enable-enchant --disable-hgcset
+
+# The headers and the pkg-config file are only useful for out-of-tree
+# modules; they would conflict with the mcabber package.
+override_dh_auto_install:
+	dh_auto_install
+	rm -rf debian/mcabber-ng/usr/include
+	rm -rf debian/mcabber-ng/usr/lib/*/pkgconfig debian/mcabber-ng/usr/lib/pkgconfig
+	find debian/mcabber-ng -name '*.la' -delete

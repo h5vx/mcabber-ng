@@ -1,17 +1,19 @@
 
- /BIND [keycode [= commando regel]]
+ /BIND [toets [= commando]]
 
-Verbind het commando "commando regel" met de toets "keycode".  Om te weten te komen of een bepaalde toets nog niet in gebruik is kun je het `mcabber` log venster observeren wanneer je de toets indrukt. Bijvoorbeeld: "Unknown key=265" betekent dat je een commando met toets #265 kan verbinden.
+Koppelt een commando aan een toetsencombinatie.  Toetsen worden met hun naam aangegeven, bijvoorbeeld "Alt+j", "Ctrl+Left", "F5" of "Ctrl+Shift+PgUp".  Druk op een toets om de naam ervan te zien: voor niet-gekoppelde toetsen verschijnt in het logvenster een melding zoals "Unknown key: Alt+j".
 
 /bind
- Toon een lijst met huidige toets verbindingen
-/bind keycode
- Toon de commando regel die met deze toets verbonden is
-/bind keycode=
- Maak de toets met code "keycode" weer vrij
-/bind keycode = commando regel
- Verbind "commando regel" met de toets die code "keycode" heeft
+ Toont de lijst van koppelingen
+/bind toets
+ Toont het commando dat aan de toets gekoppeld is
+/bind toets =
+ Verwijdert de koppeling van de toets
+/bind toets = commando
+ Koppelt het commando aan de toets
 
-Voorbeeld: "/bind 265 = status away" (265 is F1).
-NB: keycodes kunnen verschillen afhankelijk van je ncurses configuratie.
-Tip: in plaats van commando's kunnen ook aliassen worden gebruikt.
+Modifiers: Ctrl (C), Alt (Meta, M), Shift (S), verbonden met "+" of "-".
+Toetsen met een naam: Enter, Tab, Backspace, Esc, Space, Up, Down, Left, Right, Home, End, PgUp, PgDn, Ins, Del, F1..F63, WheelUp, WheelDown.  Elke andere toets is één teken: "Alt+j", "Alt+é", "Ctrl+=".
+Voorbeeld: "/bind F5 = roster toggle_offline"
+Let op: sommige combinaties kan de terminal niet onderscheiden (Ctrl+i is Tab, Ctrl+m is Enter).
+Tip: aliassen kunnen ook gebruikt worden in plaats van commando's.

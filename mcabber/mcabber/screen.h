@@ -25,10 +25,12 @@ void spellcheck_deinit(void);
 #endif
 
 #include <mcabber/hbuf.h>
+#include <mcabber/keys.h>
 #include <mcabber/logprint.h>
 #include <mcabber/roster.h>
 
-#define INPUTLINE_LENGTH  1024
+// Maximum size of the input line, in bytes (it can have several lines)
+#define INPUTLINE_LENGTH  8191
 
 // Only used in screen.c; this is the maximum line number
 // in a multi-line message.  Should be < 1000
@@ -67,23 +69,14 @@ typedef struct {
   int utf8;
   enum {
     MKEY_NONE = 0,
-    MKEY_META,
-    MKEY_EQUIV,
-    MKEY_CTRL_PGUP,
-    MKEY_CTRL_PGDOWN,
-    MKEY_SHIFT_PGUP,
-    MKEY_SHIFT_PGDOWN,
-    MKEY_CTRL_SHIFT_PGUP,
-    MKEY_CTRL_SHIFT_PGDOWN,
-    MKEY_CTRL_HOME,
-    MKEY_CTRL_END,
-    MKEY_CTRL_INS,
-    MKEY_CTRL_DEL,
-    MKEY_CTRL_SHIFT_HOME,
-    MKEY_CTRL_SHIFT_END,
-    MKEY_MOUSE
+    MKEY_META,      // Esc + value
+    MKEY_MOUSE,     // value is the mouse event mask
+    MKEY_SPEC       // Escape sequence decoded into spec
   } mcode;
+  keyspec_t spec;
 } keycode_t;
+
+gchar *scr_keycode_name(const keycode_t *kcode);
 
 typedef enum {
   MC_ALL,
@@ -98,11 +91,28 @@ void scr_write_incoming_message(const char *jidfrom, const char *text,
                                 unsigned mucnicklen);
 void scr_write_outgoing_message(const char *jidto,   const char *text,
                                 guint prefix, gpointer xep184);
+void scr_write_incoming_message_nick(const char *jidfrom, const char *text,
+                                     const char *nick, time_t timestamp,
+                                     guint prefix);
+void scr_write_outgoing_message_nick(const char *jidto, const char *text,
+                                     const char *nick, guint prefix,
+                                     gpointer xep184);
 
 void scr_getch(keycode_t *kcode);
 void scr_process_key(keycode_t kcode);
+void scr_process_input(void);
+void scr_format_changed(void);
+void scr_members(const char *arg);
+void scr_console(const char *arg);
+void scr_console_add(gboolean outgoing, const char *data);
+gboolean scr_console_shown(void);
+gboolean scr_set_style(const char *name, const char *spec, GError **err);
+const char *scr_get_inputline(void);
+void scr_set_inputline(const char *text);
+void scr_insert_inputline(const char *text);
 
 void scr_init_bindings(void);
+gboolean scr_bind_key(const char *name, const char *command, GError **err);
 void scr_init_locale_charset(void);
 void scr_init_curses(void);
 void scr_init_settings(void);
@@ -134,7 +144,6 @@ guint scr_getprefixwidth(void);
 guint scr_gettextwidth(void);
 guint scr_gettextheight(void);
 guint scr_getlogwinheight(void);
-size_t scr_line_prefix(hbb_line *line, char *prefix, guint preflen);
 
 void scr_beep(void);
 void scr_check_auto_away(int activity);
@@ -196,6 +205,11 @@ void readline_backward_kill_char(void);
 void readline_forward_kill_char(void);
 void readline_iline_start(void);
 void readline_iline_end(void);
+void readline_buffer_start(void);
+void readline_buffer_end(void);
+void readline_insert_newline(void);
+void readline_line_up_or_hist(void);
+void readline_line_down_or_hist(void);
 void readline_backward_kill_iline(void);
 void readline_forward_kill_iline(void);
 void readline_send_multiline(void);

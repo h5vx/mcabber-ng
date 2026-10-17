@@ -31,7 +31,7 @@
  *              be detected from locale, with fallback to english.
  *   help_dirs  List of semicolon-seaparated directories, where search for
  *              help (in language subdirectories) will be performed.
- *              Defaults to DATA_DIR/mcabber/help.
+ *              Defaults to DATA_DIR/mcabber-ng/help.
  *   help_to_current  Print help to current buddy's buffer.
  *
  * XXX:
@@ -104,7 +104,7 @@ void init_help_dirs(void)
   paths = settings_opt_get("help_dirs");
   if (!paths || !*paths)
 #ifdef DATA_DIR
-    paths = DATA_DIR "/mcabber/help";
+    paths = DATA_DIR "/mcabber-ng/help";
 #else
     paths = "/usr/local/share/mcabber/help;/usr/share/mcabber/help";
 #endif

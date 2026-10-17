@@ -1,0 +1,8 @@
+
+ /CONSOLE [show|hide|toggle|clear]
+
+Display the XMPP console: the XML data sent to and received from the server (SASL credentials are masked).
+While the console is displayed, text typed in the input line is sent to the server as raw XML; commands still work.  Escape or "/console hide" leaves the console.
+
+/console clear
+ Empty the console

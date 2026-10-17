@@ -5,7 +5,7 @@ Eine mehrzeilige Nachricht verschicken. Um eine einzelne Nachricht mit mehreren 
 In diesem Modus wird jede Zeile (außer Befehlszeilen), die in der Eingabezeile eingegeben wurden, zu der Nachricht hinzugefügt. Sobald die Nachricht fertig ist, kann sie zu dem gerade ausgewählten Buddy durch "/msay send" geschickt werden.
 Der "begin" Unterbefehl startet den Mehrzeilen-Modus. Es ist sogar möglich einen Betreff zu setzen.
 Anstatt "begin" kann man auch "verbatim" benutzen, wobei verbatim auch Zeilen mit einem / am Anfang zulässt. Nur der "/msay send/abort" Befehl führt zum Abbruch von diesem Modus.
-Der "toggle" Unterbefehl kann auf eine Taste gelegt werden, um den Mehrzeilen-Modus schnell zu benutzen(z.B. "/bind M13 = msay toggle" um per Meta-Enter zu wechseln).
+Der "toggle" Unterbefehl kann auf eine Taste gelegt werden, um den Mehrzeilen-Modus schnell zu benutzen(z.B. "/bind Alt+m = msay toggle" um per Alt+m zu wechseln).
 
 /msay begin [subject]
  Mehrzeilen-Modus starten
