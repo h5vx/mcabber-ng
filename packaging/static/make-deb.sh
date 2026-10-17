@@ -42,8 +42,9 @@ cat "$SRC/packaging/debian/copyright" > "$DOC/copyright"
 cat >> "$DOC/copyright" <<'EOF'
 
 Comment: The program is statically linked with GLib, ncurses, Loudmouth,
- OpenSSL, LuaJIT (or Lua 5.1), musl, libomemo-c (GPL-3), libgcrypt and
- libgpg-error (LGPL-2.1+), protobuf-c and their dependencies; the binary
+ OpenSSL, LuaJIT (or Lua 5.1), musl, libomemo-c (GPL-3), libotr,
+ libgcrypt and libgpg-error (LGPL-2.1+), protobuf-c and their
+ dependencies; the binary
  is therefore distributed under the terms of the GPL-3.
 EOF
 gzip -9n "$PKG/usr/share/man/man1/mcabber-ng.1"
@@ -67,8 +68,8 @@ Description: Jabber (XMPP) console client configured in Lua
  OMEMO end-to-end encryption.
  .
  This package contains a static build, without dependencies, for any
- Debian or Ubuntu release.  It is built without modules, PGP, OTR, IDN
- and spell checking.
+ Debian or Ubuntu release.  It is built without modules, PGP, IDN and
+ spell checking.
 EOF
 
 chmod -R u+rwX,go+rX,go-w "$PKG"

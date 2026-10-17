@@ -130,6 +130,9 @@ void otr_init(const char *fjid)
   userstate = otrl_userstate_create();
 
   root = otr_get_dir();
+  // The keys are created in this directory
+  if (g_mkdir_with_parents(root, 0700))
+    scr_LogPrint(LPRINT_LOGNORM, "Cannot create the OTR directory %s", root);
   account = jidtodisp(fjid);
   keyfile = g_strdup_printf("%s%s.key", root, account);
   fprfile = g_strdup_printf("%s%s.fpr", root, account);

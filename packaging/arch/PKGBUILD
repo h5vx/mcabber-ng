@@ -7,7 +7,7 @@ arch=('x86_64' 'aarch64')
 url="https://github.com/h5vx/mcabber-ng"
 license=('GPL-2.0-or-later')
 depends=('ncurses' 'glib2' 'loudmouth' 'luajit' 'gpgme' 'libidn' 'enchant'
-         'libomemo-c' 'libgcrypt')
+         'libomemo-c' 'libgcrypt' 'libotr')
 makedepends=('autoconf' 'automake' 'libtool' 'pkgconf')
 options=('!libtool')
 source=()
@@ -15,7 +15,7 @@ source=()
 build() {
   cd "$startdir/src-tree"
   autoreconf -fi -I macros
-  ./configure --prefix=/usr --enable-enchant --enable-omemo=yes \
+  ./configure --prefix=/usr --enable-enchant --enable-omemo=yes --enable-otr \
     --disable-hgcset
   make
 }

@@ -66,8 +66,8 @@ Each [release](https://github.com/h5vx/mcabber-ng/releases) provides:
 
 The `.deb` packages and the static binaries have no dependencies (they are
 built with musl), and the static archives can be extracted anywhere
-(usually in `/usr/local`). They are built without modules, PGP, OTR, IDN
-and spell checking; build from source to get them.
+(usually in `/usr/local`). They are built without modules, PGP, IDN and
+spell checking; build from source to get them.
 
 ```sh
 sudo apt install ./mcabber-ng_*_amd64.deb

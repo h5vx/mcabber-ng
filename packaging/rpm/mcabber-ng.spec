@@ -18,6 +18,7 @@ BuildRequires:  pkgconfig(libomemo-c)
 # libomemo-c.pc links with protobuf-c
 BuildRequires:  pkgconfig(libprotobuf-c)
 BuildRequires:  pkgconfig(libgcrypt)
+BuildRequires:  libotr-devel
 
 %description
 mcabber-ng is a fork of mcabber, a small Jabber (XMPP) client for the
@@ -29,7 +30,7 @@ readable names, event handlers, message and interface formats, themes.
 
 %build
 autoreconf -fi -I macros
-%configure --enable-enchant --enable-omemo=yes --disable-hgcset
+%configure --enable-enchant --enable-omemo=yes --enable-otr --disable-hgcset
 %make_build
 
 %check

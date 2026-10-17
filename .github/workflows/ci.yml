@@ -26,12 +26,12 @@ jobs:
             autoconf automake libtool pkg-config libncurses-dev \
             libglib2.0-dev libloudmouth1-dev libgpgme-dev libidn-dev \
             libenchant-2-dev libluajit-5.1-dev liblua5.1-0-dev \
-            libomemo-c-dev libgcrypt20-dev
+            libomemo-c-dev libgcrypt20-dev libotr5-dev
       - name: Build
         working-directory: mcabber
         run: |
           ./autogen.sh
-          ./configure --enable-enchant --enable-omemo=yes \
+          ./configure --enable-enchant --enable-omemo=yes --enable-otr \
             --with-lua=${{ matrix.lua }}
           make -j"$(nproc)"
       - name: Unit tests

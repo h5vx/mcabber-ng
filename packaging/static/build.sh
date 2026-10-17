@@ -10,13 +10,15 @@
 # $OUT): the binary, the help files, the Lua themes and the sample
 # configuration, to be extracted in /usr/local.
 #
-# Modules, PGP (gpgme) and IDN are disabled in the static binary.
+# Modules, PGP (gpgme), IDN and spell checking are disabled in the static
+# binary.
 
 set -eu
 
 VERSION=${1:-dev}
 LOUDMOUTH_VERSION=1.5.4
 LIBOMEMO_C_VERSION=0.5.1
+LIBOTR_VERSION=4.1.1
 SRC=$(pwd)
 OUT=${OUT:-$SRC/dist}
 DEPS=/opt/deps
@@ -65,6 +67,17 @@ cmake -S "libomemo-c-$LIBOMEMO_C_VERSION" -B libomemo-c-build \
 cmake --build libomemo-c-build -j"$(nproc)"
 cmake --install libomemo-c-build
 
+# libotr (OTR), as a static library
+cd "$WORK"
+curl -fsSL -o libotr.tar.gz \
+  "https://otr.cypherpunks.ca/libotr-$LIBOTR_VERSION.tar.gz"
+tar xzf libotr.tar.gz
+cd "libotr-$LIBOTR_VERSION"
+./configure --prefix="$DEPS" --enable-static --disable-shared
+# Only the library (the tests don't build with recent compilers)
+make -j"$(nproc)" -C src
+make -C src install
+
 # mcabber-ng
 cp -a "$SRC/mcabber" "$WORK/mcabber-ng"
 # The version comes from the release tag
@@ -77,10 +90,11 @@ autoreconf -fi -I macros
 PKG_CONFIG="pkg-config --static" \
 PKG_CONFIG_PATH="$DEPS/lib/pkgconfig" \
 LDFLAGS="-static" \
-LIBS="$(pkg-config --static --libs gobject-2.0 glib-2.0)" \
+LIBS="$(pkg-config --static --libs gobject-2.0 glib-2.0 libgcrypt)" \
   ./configure --prefix=/usr/local --with-lua="$LUA" \
     --disable-modules --disable-gpgme --without-libidn --disable-hgcset \
-    --enable-omemo=yes
+    --enable-omemo=yes --enable-otr \
+    --with-libotr-prefix="$DEPS/lib" --with-libotr-inc-prefix="$DEPS/include"
 # libtool needs -all-static to link a fully static program
 make -j"$(nproc)" LDFLAGS="-all-static"
 make check LDFLAGS="-all-static"
