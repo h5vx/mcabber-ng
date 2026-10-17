@@ -311,6 +311,11 @@ Alt\-o
 .RS 4
 Label the links of the chat window, to open one ("/url")
 .RE
+.PP
+Alt\-e
+.RS 4
+Edit the input line in an external editor ("/editor")
+.RE
 .sp
 Additional key bindings may be specified using the \fI/bind\fR command described in the COMMANDS section\&.
 .SH "VI MODE"
@@ -1587,6 +1592,21 @@ Show or hide the members of the current room (see USER INTERFACE)\&.
 Display the XMPP console (see USER INTERFACE)\&.
 \fIclear\fR
 empties it\&.
+.RE
+.PP
+/editor [cancel]
+.RS 4
+Edit the input line (the message being written) in an external editor: the
+\fIeditor\fR
+option, or $VISUAL, or $EDITOR, or vi\&. When the editor is closed, the text replaces the input line, without its final line breaks; it can have several lines\&. If the editor fails (e\&.g\&. ":cq" in Vim), the input line is not changed\&.
+
+Inside tmux, the editor is opened in another pane and mcabber\-ng keeps running; the
+\fIeditor_tmux\fR
+option chooses "split" (a pane next to mcabber\-ng, the default), "window" (a new window), "popup" (a popup window) or "off" (in the terminal of mcabber\-ng, as outside tmux, where the screen of mcabber\-ng is suspended while the editor runs)\&.
+\fIeditor_tmux_args\fR
+gives other arguments to the tmux command (default "\-h" for split\-window, "\-w 80% \-h 80%" for display\-popup), e\&.g\&. "\-v \-l 10" for a pane of 10 lines below mcabber\-ng\&.
+
+"/editor cancel" forgets an editor opened in tmux whose end mcabber\-ng is waiting for\&.
 .RE
 .PP
 /url [command]

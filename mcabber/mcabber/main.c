@@ -45,6 +45,7 @@
 #include "events.h"
 #include "compl.h"
 #include "mlua.h"
+#include "editor.h"
 #ifdef HAVE_OMEMO
 # include "omemo.h"
 #endif
@@ -636,6 +637,7 @@ int main(int argc, char **argv)
   }
 
   mlua_emit_simple("quit");
+  editor_deinit();
   evs_deinit();
 #ifdef MODULES_ENABLE
   modules_deinit();

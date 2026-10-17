@@ -1084,6 +1084,14 @@ Alt-o
 Label the links of the chat window, to open one ("/url")
 </p>
 </dd>
+<dt class="hdlist1">
+Alt-e
+</dt>
+<dd>
+<p>
+Edit the input line in an external editor ("/editor")
+</p>
+</dd>
 </dl></div>
 <div class="paragraph"><p>Additional key bindings may be specified using the <em>/bind</em> command described
 in the COMMANDS section.</p></div>
@@ -3091,6 +3099,16 @@ Set/update/delete an annotation. If there is no text, the current item&#8217;s a
 </p>
 </dd>
 <dt class="hdlist1">
+/editor [cancel]
+</dt>
+<dd>
+<p>
+        Edit the input line (the message being written) in an external editor: the <em>editor</em> option, or $VISUAL, or $EDITOR, or vi.  When the editor is closed, the text replaces the input line, without its final line breaks; it can have several lines.  If the editor fails (e.g. ":cq" in Vim), the input line is not changed.<br>
+        Inside tmux, the editor is opened in another pane and mcabber-ng keeps running; the <em>editor_tmux</em> option chooses "split" (a pane next to mcabber-ng, the default), "window" (a new window), "popup" (a popup window) or "off" (in the terminal of mcabber-ng, as outside tmux, where the screen of mcabber-ng is suspended while the editor runs).  <em>editor_tmux_args</em> gives other arguments to the tmux command (default "-h" for split-window, "-w 80% -h 80%" for display-popup), e.g. "-v -l 10" for a pane of 10 lines below mcabber-ng.<br>
+        "/editor cancel" forgets an editor opened in tmux whose end mcabber-ng is waiting for.
+</p>
+</dd>
+<dt class="hdlist1">
 /url [command]
 </dt>
 <dd>
@@ -3694,7 +3712,7 @@ License (GPL).</p></div>
 <div id="footer-text">
 Version 1.0.0<br>
 Last updated
- 2026-10-17 20:43:46 WITA
+ 2026-10-18 02:06:11 WITA
 </div>
 </div>
 </body>

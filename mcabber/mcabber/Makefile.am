@@ -17,7 +17,7 @@ mcabber_ng_SOURCES = main.c main.h roster.c roster.h events.c events.h \
 		  xmpp_muc.c xmpp_muc.h xmpp_s10n.c xmpp_s10n.h \
 		  caps.c caps.h help.c help.h carbons.c carbons.h \
 		  mlua.c mlua.h mlua_compat.h mlua_api.c mlua_events.c \
-		  msgformat.c msgformat.h
+		  msgformat.c msgformat.h editor.c editor.h
 nodist_mcabber_ng_SOURCES = mlua_prelude.h
 EXTRA_DIST = mlua_prelude.lua
 

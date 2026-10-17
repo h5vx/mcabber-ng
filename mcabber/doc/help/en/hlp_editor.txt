@@ -1,0 +1,9 @@
+
+ /EDITOR [cancel]
+
+Edit the input line in an external editor (the "editor" option, $VISUAL, $EDITOR or vi).  When the editor is closed, the text replaces the input line; if the editor fails (":cq" in Vim), the input line is not changed.
+Inside tmux, the editor opens in a pane next to mcabber-ng, which keeps running.  The "editor_tmux" option can be "split" (default), "window", "popup" or "off"; "editor_tmux_args" adds arguments to the tmux command (e.g. "-v -l 10").
+The default key binding is Alt+e.
+
+/editor cancel
+ Forget an editor opened in tmux

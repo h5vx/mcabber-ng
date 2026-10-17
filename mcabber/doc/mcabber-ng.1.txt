@@ -134,6 +134,7 @@ Ctrl-w::        Backward kill word
 Ctrl-t::        Transpose chars
 Ctrl-o::        Accept line and put the next history line in the input line (accept-line-and-down-history)
 Alt-o::         Label the links of the chat window, to open one ("/url")
+Alt-e::         Edit the input line in an external editor ("/editor")
 
 Additional key bindings may be specified using the '/bind' command described
 in the COMMANDS section.
@@ -596,6 +597,11 @@ COMMANDS RELATED TO MCABBER
 
 /console [show|hide|toggle|clear]::
         Display the XMPP console (see USER INTERFACE).  'clear' empties it.
+
+/editor [cancel]::
+        Edit the input line (the message being written) in an external editor: the 'editor' option, or $VISUAL, or $EDITOR, or vi.  When the editor is closed, the text replaces the input line, without its final line breaks; it can have several lines.  If the editor fails (e.g. ":cq" in Vim), the input line is not changed. +
+        Inside tmux, the editor is opened in another pane and mcabber-ng keeps running; the 'editor_tmux' option chooses "split" (a pane next to mcabber-ng, the default), "window" (a new window), "popup" (a popup window) or "off" (in the terminal of mcabber-ng, as outside tmux, where the screen of mcabber-ng is suspended while the editor runs).  'editor_tmux_args' gives other arguments to the tmux command (default "-h" for split-window, "-w 80% -h 80%" for display-popup), e.g. "-v -l 10" for a pane of 10 lines below mcabber-ng. +
+        "/editor cancel" forgets an editor opened in tmux whose end mcabber-ng is waiting for.
 
 /url [command]::
         Label the links displayed in the chat window (like the EasyMotion plugin of Vim), even when they are wrapped on several lines: type the label of a link to open it; Escape cancels.  When there is only one link, it is opened directly. +
