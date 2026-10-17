@@ -157,6 +157,8 @@ static gboolean members_hidden;   // "/members hide"
 static gboolean members_shown;    // The members panel is displayed
 static winbuf_t *consoleWindow;   // XMPP console
 static gboolean console_shown;
+static GList *console_buddy;      // Current buddy when it was displayed
+static void console_show(void);
 static int maxY, maxX;
 static int prev_chatwidth;
 static winbuf_t *statusWindow;
@@ -1774,6 +1776,11 @@ void scr_show_buddy_window(void)
   const gchar *bjid;
 
   buddylist_build();
+  // The XMPP console stays displayed until another buddy is selected
+  if (console_shown && current_buddy == console_buddy) {
+    console_show();
+    return;
+  }
   if (!current_buddy) {
     bjid = NULL;
   } else {
@@ -2321,9 +2328,9 @@ void scr_draw_main_window(unsigned int fullinit)
   /* Draw/init windows */
 
   ver = mcabber_version();
-  message = g_strdup_printf("MCabber version %s.\n", ver);
+  message = g_strdup_printf("mcabber-ng version %s.\n", ver);
   mvwprintw(chatWnd, 0, 0, "%s", message);
-  mvwprintw(chatWnd, 1, 0, "https://mcabber.com/");
+  mvwprintw(chatWnd, 1, 0, "https://github.com/h5vx/mcabber-ng");
   g_free(ver);
   g_free(message);
 
@@ -3064,6 +3071,7 @@ static void console_show(void)
 {
   console_create();
   console_shown = TRUE;
+  console_buddy = current_buddy;
   chatmode = TRUE;
   currentWindow = consoleWindow;
   top_panel(consoleWindow->panel);

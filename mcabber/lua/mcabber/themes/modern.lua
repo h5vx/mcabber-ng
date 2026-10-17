@@ -123,7 +123,7 @@ local theme = {
                 .. "{#accent}≡{#} {name:*}",
     },
     chat_status = " {?locked}{#roster_unread}⏸{#} {/}"
-                  .. "{#status_$status}{icon}{#} {#title}{name:*}{#}"
+                  .. "{?icon}{#status_$status}{icon}{#} {/}{#title}{name:*}{#}"
                   .. "{?resource}{#dim}/{resource}{#}{/}"
                   .. "{?msg} {#dim}— {msg:*}{#}{/} "
                   .. "{>}{?chatstate} {#dim}{chatstate}{#} {/}",

@@ -193,8 +193,11 @@ local function style_spec(v)
   return table.concat(parts, " ")
 end
 
--- mc.style(name, style): set a style (nil restores the default)
+-- mc.style(name, style): set a style (nil or false restores the default)
 function mc.style(name, spec)
+  if spec == false then
+    spec = nil
+  end
   return mc._style(name, style_spec(spec))
 end
 
