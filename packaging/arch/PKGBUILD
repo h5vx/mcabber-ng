@@ -1,0 +1,30 @@
+# Built from the source tree by packaging/build-package.sh
+pkgname=mcabber-ng
+pkgver=${MCNG_PKGVER:-0.0.0}
+pkgrel=1
+pkgdesc="Jabber (XMPP) console client configured in Lua (fork of mcabber)"
+arch=('x86_64' 'aarch64')
+url="https://github.com/h5vx/mcabber-ng"
+license=('GPL-2.0-or-later')
+depends=('ncurses' 'glib2' 'loudmouth' 'luajit' 'gpgme' 'libidn' 'enchant')
+makedepends=('autoconf' 'automake' 'libtool' 'pkgconf')
+options=('!libtool')
+source=()
+
+build() {
+  cd "$startdir/src-tree"
+  autoreconf -fi -I macros
+  ./configure --prefix=/usr --enable-enchant --disable-hgcset
+  make
+}
+
+check() {
+  cd "$startdir/src-tree"
+  make check
+}
+
+package() {
+  cd "$startdir/src-tree"
+  make DESTDIR="$pkgdir" install
+  rm -rf "$pkgdir/usr/include" "$pkgdir/usr/lib/pkgconfig"
+}

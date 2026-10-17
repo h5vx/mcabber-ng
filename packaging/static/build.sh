@@ -4,10 +4,11 @@
 #   docker run --rm -v "$PWD:/src" -w /src alpine:3.21 \
 #     sh packaging/static/build.sh VERSION
 #
+# ARCH sets the architecture name used in the file name (default: uname -m).
+#
 # The result is dist/mcabber-ng-VERSION-linux-ARCH-static.tar.gz (or in
-# $OUT): the
-# binary, the help files, the Lua themes and the sample configuration,
-# to be extracted in /usr/local.
+# $OUT): the binary, the help files, the Lua themes and the sample
+# configuration, to be extracted in /usr/local.
 #
 # Modules, PGP (gpgme) and IDN are disabled in the static binary.
 
@@ -19,7 +20,7 @@ SRC=$(pwd)
 OUT=${OUT:-$SRC/dist}
 DEPS=/opt/deps
 WORK=$(mktemp -d)
-ARCH=$(uname -m)
+ARCH=${ARCH:-$(uname -m)}
 
 apk add --no-cache \
   build-base autoconf automake libtool pkgconf curl tar file gtk-doc \
@@ -45,20 +46,29 @@ cd "loudmouth-$LOUDMOUTH_VERSION"
 autoreconf -fi
 ./configure --prefix="$DEPS" --enable-static --disable-shared \
   --with-ssl=openssl --without-idn --disable-gtk-doc
+# Loudmouth uses -Werror, which fails with recent compilers and GLib
+find . -name Makefile -exec sed -i 's/-Werror//g' {} +
 make -j"$(nproc)"
 make install
 
 # mcabber-ng
 cp -a "$SRC/mcabber" "$WORK/mcabber-ng"
+# The version comes from the release tag
+sed -i "s/^AC_INIT(\[mcabber-ng\],\[[^]]*\]/AC_INIT([mcabber-ng],[$VERSION]/" \
+  "$WORK/mcabber-ng/configure.ac"
 cd "$WORK/mcabber-ng"
 autoreconf -fi -I macros
+# The static libraries of GLib/GObject (libffi, pcre2...) are added at the
+# end of the link command.
 PKG_CONFIG="pkg-config --static" \
 PKG_CONFIG_PATH="$DEPS/lib/pkgconfig" \
 LDFLAGS="-static" \
+LIBS="$(pkg-config --static --libs gobject-2.0 glib-2.0)" \
   ./configure --prefix=/usr/local --with-lua="$LUA" \
     --disable-modules --disable-gpgme --without-libidn --disable-hgcset
-make -j"$(nproc)"
-make check
+# libtool needs -all-static to link a fully static program
+make -j"$(nproc)" LDFLAGS="-all-static"
+make check LDFLAGS="-all-static"
 strip mcabber/mcabber-ng
 file mcabber/mcabber-ng
 if ! file mcabber/mcabber-ng | grep -q "statically linked\|static-pie"; then

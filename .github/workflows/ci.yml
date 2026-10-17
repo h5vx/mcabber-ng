@@ -1,0 +1,40 @@
+# Build and run the unit tests on each push and pull request.
+name: CI
+
+on:
+  push:
+    branches: ['**']
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    name: ${{ matrix.lua }}
+    runs-on: ubuntu-24.04
+    strategy:
+      fail-fast: false
+      matrix:
+        lua: [luajit, lua5.1]
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install the dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            autoconf automake libtool pkg-config libncurses-dev \
+            libglib2.0-dev libloudmouth1-dev libgpgme-dev libidn-dev \
+            libenchant-2-dev libluajit-5.1-dev liblua5.1-0-dev
+      - name: Build
+        working-directory: mcabber
+        run: |
+          ./autogen.sh
+          ./configure --enable-enchant --with-lua=${{ matrix.lua }}
+          make -j"$(nproc)"
+      - name: Unit tests
+        working-directory: mcabber
+        run: make check
+      - name: Configuration check
+        working-directory: mcabber
+        run: ./mcabber/mcabber-ng -n -f init.lua.example
