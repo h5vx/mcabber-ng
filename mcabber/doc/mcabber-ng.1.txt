@@ -1,7 +1,7 @@
 MCABBER-NG(1)
 =============
 Mikael BERTHE <mcabber@lilotux.net>
-v0.1.0-dev, October 2026
+v1.0.0, October 2026
 
 NAME
 ----
