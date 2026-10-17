@@ -1,0 +1,26 @@
+
+ /OMEMO [info|own|on|off|default|trust|distrust|forget|fetch|cleanup] [jid] [device|fingerprint]
+
+OMEMO end-to-end encryption of one-to-one chats (XEP-0384, compatible with Conversations, Dino, Gajim, Profanity...).  Rooms are not supported.
+When the jid is omitted, the current buddy is used.  A device is designated by its ID or by its fingerprint (at least its first 8 digits).
+
+/omemo info [jid]
+ Show whether messages to jid are encrypted, and its devices with their trust level and fingerprint (without jid: this device)
+/omemo own
+ Show this device and the other devices of your account
+/omemo on [jid]
+ Always encrypt messages to jid (never send them unencrypted)
+/omemo off [jid]
+ Never encrypt messages to jid
+/omemo default [jid]
+ Follow the "omemo_policy" option for jid
+/omemo trust [jid] device|fingerprint
+ Mark the device as verified (compare the fingerprint with the contact first)
+/omemo distrust [jid] device|fingerprint
+ Never encrypt for this device, and refuse its messages
+/omemo forget [jid] device|fingerprint
+ Forget the keys and the session of the device
+/omemo fetch [jid]
+ Fetch the device list and the keys of jid again
+/omemo cleanup
+ Publish a device list that contains only this device (removes old devices of your account)

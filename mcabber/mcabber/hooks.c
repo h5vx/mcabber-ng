@@ -186,6 +186,8 @@ static const char *encryption_name(guint encrypted)
     return "pgp";
   if (encrypted == ENCRYPTED_OTR)
     return "otr";
+  if (encrypted == ENCRYPTED_OMEMO)
+    return "omemo";
   return NULL;
 }
 
@@ -273,6 +275,8 @@ static void hk_message_in_real(const char *bjid, const char *resname,
     message_flags |= HBB_PREFIX_PGPCRYPT;
   else if (encrypted == ENCRYPTED_OTR)
     message_flags |= HBB_PREFIX_OTRCRYPT;
+  else if (encrypted == ENCRYPTED_OMEMO)
+    message_flags |= HBB_PREFIX_OMEMOCRYPT;
 
   if (carbon)
     message_flags |= HBB_PREFIX_CARBON;
@@ -600,6 +604,8 @@ void hk_message_out(const char *bjid, const char *nick,
     message_flags |= HBB_PREFIX_PGPCRYPT;
   else if (encrypted == ENCRYPTED_OTR)
     message_flags |= HBB_PREFIX_OTRCRYPT;
+  else if (encrypted == ENCRYPTED_OMEMO)
+    message_flags |= HBB_PREFIX_OMEMOCRYPT;
 
   if (carbon)
     message_flags |= HBB_PREFIX_CARBON | HBB_PREFIX_NOFLAG;

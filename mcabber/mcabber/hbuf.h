@@ -35,6 +35,7 @@
 #define HBB_PREFIX_ME         (1U<<18)  // "/me" action
 #define HBB_PREFIX_MUC        (1U<<19)  // Room message (with a nickname)
 #define HBB_PREFIX_PRIVATE    (1U<<20)  // Private message in a room
+#define HBB_PREFIX_OMEMOCRYPT (1U<<21)
 
 typedef struct {
   time_t timestamp;

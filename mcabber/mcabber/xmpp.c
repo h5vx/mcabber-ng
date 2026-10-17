@@ -40,6 +40,9 @@
 #include "main.h"
 #include "carbons.h"
 #include "mlua.h"
+#ifdef HAVE_OMEMO
+# include "omemo.h"
+#endif
 
 #define RECONNECTION_TIMEOUT    60L
 
@@ -324,6 +327,7 @@ void xmpp_send_msg(const char *fjid, const char *text, int type,
   struct xep0085 *xep85 = NULL;
 #endif
   gchar *enc = NULL;
+  gboolean use_omemo = FALSE;
 
   if (encrypted)
     *encrypted = 0;
@@ -344,12 +348,32 @@ void xmpp_send_msg(const char *fjid, const char *text, int type,
   }
 
   barejid = jidtodisp(fjid);
+
+#ifdef HAVE_OMEMO
+  if (type == ROSTER_TYPE_USER && text && !otrinject) {
+    gchar *reason = NULL;
+    switch (omemo_send_mode(barejid, &reason)) {
+      case OMEMO_SEND_ENCRYPTED:
+        use_omemo = TRUE;
+        break;
+      case OMEMO_SEND_REFUSE:
+        scr_LogPrint(LPRINT_LOGNORM, "OMEMO: %s.", reason);
+        g_free(reason);
+        if (encrypted)
+          *encrypted = -1;
+        goto xmpp_send_msg_return;
+      default:
+        break;
+    }
+  }
+#endif
+
 #if defined HAVE_GPGME || defined HAVE_LIBOTR || defined XEP0085
   rname = jid_get_resource_name(fjid);
   sl_buddy = roster_find(barejid, jidsearch, ROSTER_TYPE_USER);
 
 #ifdef HAVE_LIBOTR
-  if (otr_enabled() && !otrinject) {
+  if (otr_enabled() && !otrinject && !use_omemo) {
     if (type == ROSTER_TYPE_USER) {
       otr_msg_string = otr_send(text, barejid, &otr_msg);
       if (!otr_msg_string) {
@@ -365,7 +389,7 @@ void xmpp_send_msg(const char *fjid, const char *text, int type,
 #endif
 
 #ifdef HAVE_GPGME
-  if (type == ROSTER_TYPE_USER && sl_buddy && gpg_enabled()) {
+  if (type == ROSTER_TYPE_USER && sl_buddy && gpg_enabled() && !use_omemo) {
     if (!settings_pgp_getdisabled(barejid)) { // not disabled for this contact?
       guint force;
       struct pgp_data *res_pgpdata;
@@ -403,7 +427,8 @@ void xmpp_send_msg(const char *fjid, const char *text, int type,
   x = lm_message_new_with_sub_type(fjid, LM_MESSAGE_TYPE_MESSAGE, subtype);
   if (text) {
     lm_message_node_add_child(x->node, "body",
-                              enc ? "This message is PGP-encrypted." : text);
+                              enc ? "This message is PGP-encrypted." :
+                              use_omemo ? OMEMO_FALLBACK_BODY : text);
   }
 
   if (subject)
@@ -465,8 +490,18 @@ xmpp_send_msg_no_chatstates:
   if (mystatus != invisible)
 #endif
     update_last_use();
-  lm_connection_send(lconnection, x, NULL);
-  lm_message_unref(x);
+#ifdef HAVE_OMEMO
+  if (use_omemo) {
+    // The message may wait for the keys of the recipient
+    omemo_send(x, barejid, text);
+    if (encrypted)
+      *encrypted = ENCRYPTED_OMEMO;
+  } else
+#endif
+  {
+    lm_connection_send(lconnection, x, NULL);
+    lm_message_unref(x);
+  }
 
 xmpp_send_msg_return:
 #ifdef HAVE_LIBOTR
@@ -768,6 +803,9 @@ static void connection_auth_cb(LmConnection *connection, gboolean success,
     xmpp_iq_request(NULL, NS_DISCO_INFO);
     xmpp_request_storage("storage:bookmarks");
     xmpp_request_storage("storage:rosternotes");
+#ifdef HAVE_OMEMO
+    omemo_connected();
+#endif
 
     /* XXX Not needed before xmpp_setprevstatus()
     LmMessage *m;
@@ -864,6 +902,9 @@ static void connection_close_cb(LmConnection *connection,
   rosternotes = NULL;
   // Reset carbons
   carbons_reset();
+#ifdef HAVE_OMEMO
+  omemo_disconnected();
+#endif
   // Update display
   scr_update_roster();
   scr_update_buddy_window();
@@ -922,7 +963,8 @@ static void handle_state_events(const char *bjid,
 static void gotmessage(LmMessageSubType type, const char *from,
                        const char *body, const char *enc,
                        const char *subject, time_t timestamp,
-                       LmMessageNode *node_signed, gboolean carbon)
+                       LmMessageNode *node_signed, gboolean carbon,
+                       gboolean omemo)
 {
   char *bjid;
   const char *rname;
@@ -1025,7 +1067,7 @@ static void gotmessage(LmMessageSubType type, const char *from,
   }
 
 #ifdef HAVE_LIBOTR
-  if (otr_enabled()) {
+  if (otr_enabled() && !omemo) {
     decrypted_otr = (char*)body;
     otr_msg = otr_receive(&decrypted_otr, bjid, &free_msg);
     if (!decrypted_otr) {
@@ -1039,7 +1081,9 @@ static void gotmessage(LmMessageSubType type, const char *from,
     gchar *fullbody = NULL;
     guint encrypted;
 
-    if (decrypted_pgp)
+    if (omemo)
+      encrypted = ENCRYPTED_OMEMO;
+    else if (decrypted_pgp)
       encrypted = ENCRYPTED_PGP;
     else if (otr_msg)
       encrypted = ENCRYPTED_OTR;
@@ -1081,6 +1125,8 @@ static LmHandlerResult handle_messages(LmMessageHandler *handler,
   time_t timestamp = 0L;
   LmMessageSubType mstype;
   LmMessageNode *ns_signed = NULL;
+  gchar *omemo_text = NULL;
+  gboolean omemo_ok = FALSE;
 
   if (!from) {
     scr_LogPrint(LPRINT_DEBUG, "handle_messages: message with missing from attribute");
@@ -1106,6 +1152,16 @@ static LmHandlerResult handle_messages(LmMessageHandler *handler,
   } else {
     handle_state_events(bjid, res, message_node);
   }
+
+#ifdef HAVE_OMEMO
+  {
+    // PEP notification (OMEMO device lists)
+    LmMessageNode *ev = lm_message_node_find_xmlns(message_node,
+                                                   NS_PUBSUB_EVENT);
+    if (ev && !strcmp(ev->name, "event"))
+      omemo_handle_event(from, ev);
+  }
+#endif
 
   // Check for carbons!
   x = lm_message_node_find_xmlns(message_node, NS_CARBONS_2);
@@ -1173,8 +1229,25 @@ static LmHandlerResult handle_messages(LmMessageHandler *handler,
       g_free(bjid);
       bjid = jidtodisp(to);
 
+#ifdef HAVE_OMEMO
+      {
+        // Sent by another of our devices: we are the sender
+        gchar *me = jidtodisp(lm_connection_get_jid(lconnection));
+        gboolean drop;
+        omemo_text = omemo_receive(me, message_node, &drop, &omemo_ok);
+        g_free(me);
+        if (omemo_text) {
+          if (drop)
+            goto handle_messages_return;
+          body = omemo_text;
+          if (omemo_ok)
+            encrypted = ENCRYPTED_OMEMO;
+        }
+      }
+#endif
+
 #ifdef HAVE_GPGME
-      if (gpg_enabled()) {
+      if (gpg_enabled() && !omemo_ok) {
         if (enc) {
           decrypted_pgp = gpg_decrypt(enc);
           if (decrypted_pgp) {
@@ -1210,10 +1283,26 @@ static LmHandlerResult handle_messages(LmMessageHandler *handler,
     ns_signed = lm_message_node_find_xmlns(message_node, NS_SIGNED);
   }
 
+#ifdef HAVE_OMEMO
+  // OMEMO is not supported in rooms
+  if (mstype != LM_MESSAGE_SUB_TYPE_GROUPCHAT &&
+      mstype != LM_MESSAGE_SUB_TYPE_ERROR &&
+      !roster_find(bjid, jidsearch, ROSTER_TYPE_ROOM)) {
+    gboolean drop;
+    omemo_text = omemo_receive(bjid, message_node, &drop, &omemo_ok);
+    if (omemo_text) {
+      if (drop)
+        goto handle_messages_return;
+      body = omemo_text;
+      enc = NULL;
+    }
+  }
+#endif
+
   // Only process messages that have a body or a subject
   if (body || subject) {
     gotmessage(mstype, from, body, enc, subject, timestamp,
-               ns_signed, carbons);
+               ns_signed, carbons, omemo_ok);
   }
 
   // Handle XEP 184
@@ -1285,6 +1374,7 @@ static LmHandlerResult handle_messages(LmMessageHandler *handler,
   }
 
 handle_messages_return:
+  g_free(omemo_text);
   g_free(bjid);
   return LM_HANDLER_RESULT_REMOVE_MESSAGE;
 }
@@ -2020,6 +2110,9 @@ void xmpp_disconnect(void)
   }
   if (lm_connection_is_open(lconnection))
     lm_connection_close(lconnection, NULL);
+#ifdef HAVE_OMEMO
+  omemo_disconnected();
+#endif
   lm_connection_unref(lconnection);
   lconnection = NULL;
 }

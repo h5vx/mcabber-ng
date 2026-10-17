@@ -607,6 +607,23 @@ mc.set {
 -- mc.command("otrpolicy default manual")
 
 mc.set {
+  -- OMEMO end-to-end encryption (one-to-one chats only)
+  -- (Only available if mcabber-ng is built with OMEMO support)
+  -- Set omemo to 0 to disable it.  The keys are kept in
+  -- ~/.config/mcabber-ng/omemo/<your JID>/.
+  -- omemo = 1,
+  --
+  -- With the "auto" policy, messages are encrypted for the contacts who use
+  -- OMEMO; with "manual", only for the contacts set with "/omemo on".
+  -- omemo_policy = "auto",
+  --
+  -- New devices are trusted until you verify a device of the contact
+  -- ("btbv", Blind Trust Before Verification), or must always be trusted by
+  -- hand with /omemo trust ("manual").
+  -- omemo_trust = "btbv",
+}
+
+mc.set {
   -- Entity Caps cache
   -- You can provide a directory where mcabber will store an offline cache
   -- of other clients' capabilities. This will likely reduce network overhead

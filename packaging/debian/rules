@@ -4,7 +4,7 @@
 	dh $@
 
 override_dh_auto_configure:
-	dh_auto_configure -- --enable-enchant --disable-hgcset
+	dh_auto_configure -- --enable-enchant --enable-omemo=yes --disable-hgcset
 
 # The headers and the pkg-config file are only useful for out-of-tree
 # modules; they would conflict with the mcabber package.

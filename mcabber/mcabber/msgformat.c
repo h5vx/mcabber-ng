@@ -192,6 +192,8 @@ static gchar *format_mark(guint flags)
       crypt = '~';
     else if (flags & HBB_PREFIX_OTRCRYPT)
       crypt = 'O';
+    else if (flags & HBB_PREFIX_OMEMOCRYPT)
+      crypt = 'M';
     return g_strdup_printf("<%c=", crypt);
   }
   if (flags & HBB_PREFIX_OUT) {
@@ -200,6 +202,8 @@ static gchar *format_mark(guint flags)
       crypt = '~';
     else if (flags & HBB_PREFIX_OTRCRYPT)
       crypt = 'O';
+    else if (flags & HBB_PREFIX_OMEMOCRYPT)
+      crypt = 'M';
     return g_strdup_printf("%c%c>", (flags & HBB_PREFIX_RECEIPT) ? 'r' : '-',
                            crypt);
   }
@@ -220,6 +224,7 @@ static const struct {
   { "own",       HBB_PREFIX_HLIGHT_OUT },
   { "pgp",       HBB_PREFIX_PGPCRYPT },
   { "otr",       HBB_PREFIX_OTRCRYPT },
+  { "omemo",     HBB_PREFIX_OMEMOCRYPT },
   { NULL, 0 }
 };
 
@@ -241,6 +246,8 @@ static gchar *get_field(const char *name, const char *arg, gpointer data)
       return g_strdup("pgp");
     if (m->flags & HBB_PREFIX_OTRCRYPT)
       return g_strdup("otr");
+    if (m->flags & HBB_PREFIX_OMEMOCRYPT)
+      return g_strdup("omemo");
     return NULL;
   }
   for (i = 0; i < KIND_COUNT; i++)

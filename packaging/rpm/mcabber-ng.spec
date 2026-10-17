@@ -14,6 +14,8 @@ BuildRequires:  pkgconfig(luajit)
 BuildRequires:  gpgme-devel
 BuildRequires:  pkgconfig(libidn)
 BuildRequires:  pkgconfig(enchant-2)
+BuildRequires:  pkgconfig(libomemo-c)
+BuildRequires:  pkgconfig(libgcrypt)
 
 %description
 mcabber-ng is a fork of mcabber, a small Jabber (XMPP) client for the
@@ -25,7 +27,7 @@ readable names, event handlers, message and interface formats, themes.
 
 %build
 autoreconf -fi -I macros
-%configure --enable-enchant --disable-hgcset
+%configure --enable-enchant --enable-omemo=yes --disable-hgcset
 %make_build
 
 %check

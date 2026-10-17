@@ -57,6 +57,9 @@
 #include "histolog.h"
 #include "settings.h"
 #include "mlua.h"
+#ifdef HAVE_OMEMO
+# include "omemo.h"
+#endif
 #include "layout.h"
 #include "inputlayout.h"
 #include "paste.h"
@@ -1668,6 +1671,10 @@ static void scr_update_window(winbuf_t *win_entry)
         }
         wbkgdset(win_entry->win, get_color(color));
         sstr_free(head);
+        // The head may be narrower than when the line was wrapped (e.g. the
+        // receipt mark has been removed)
+        while (getcurx(win_entry->win) < (int)line->headw)
+          waddch(win_entry->win, ' ');
       }
 
       // Display text line
@@ -1800,6 +1807,10 @@ void scr_show_buddy_window(void)
 
   roster_msg_update_unread(bjid, FALSE);
   scr_show_window(bjid, FALSE);
+#ifdef HAVE_OMEMO
+  if (buddy_gettype(BUDDATA(current_buddy)) & ROSTER_TYPE_USER)
+    omemo_prefetch(bjid);
+#endif
 }
 
 //  scr_update_buddy_window()
@@ -2488,7 +2499,8 @@ typedef struct {
 
 static const char *const chat_status_fields[] = {
   "name", "jid", "resource", "type", "type_name", "status", "status_char",
-  "icon", "msg", "chatstate", "chatmode", "locked", "unread", NULL
+  "icon", "msg", "chatstate", "chatmode", "locked", "unread", "encryption",
+  NULL
 };
 
 static gchar *chat_status_field(const char *name, const char *arg,
@@ -2529,6 +2541,12 @@ static gchar *chat_status_field(const char *name, const char *arg,
     return cs->locked ? g_strdup("1") : NULL;
   if (!strcmp(name, "unread"))
     return (buddy_getflags(cs->bud) & ROSTER_FLAG_MSG) ? g_strdup("1") : NULL;
+#ifdef HAVE_OMEMO
+  // Encryption of the next message sent
+  if (!strcmp(name, "encryption"))
+    return (t & ROSTER_TYPE_USER) ?
+           g_strdup(omemo_status(buddy_getjid(cs->bud))) : NULL;
+#endif
   return NULL;
 }
 
@@ -3528,7 +3546,8 @@ void scr_write_incoming_message_nick(const char *jidfrom, const char *text,
 {
   if (!(prefix &
         ~HBB_PREFIX_NOFLAG & ~HBB_PREFIX_HLIGHT & ~HBB_PREFIX_HLIGHT_OUT &
-        ~HBB_PREFIX_PGPCRYPT & ~HBB_PREFIX_OTRCRYPT & ~HBB_PREFIX_CARBON &
+        ~HBB_PREFIX_PGPCRYPT & ~HBB_PREFIX_OTRCRYPT &
+        ~HBB_PREFIX_OMEMOCRYPT & ~HBB_PREFIX_CARBON &
         ~HBB_PREFIX_ME & ~HBB_PREFIX_MUC & ~HBB_PREFIX_PRIVATE))
     prefix |= HBB_PREFIX_IN;
 

@@ -271,6 +271,39 @@ if test "x$enable_otr" = "xyes"; then
     ])
 fi
 
+# Check for OMEMO: libomemo-c (or libsignal-protocol-c, same API) and
+# libgcrypt
+AC_ARG_ENABLE(omemo,
+    AS_HELP_STRING([--enable-omemo=@<:@auto/yes/no@:>@],
+                   [enable OMEMO encryption (default: auto)]),
+    enable_omemo=$enableval, enable_omemo=auto)
+omemo_found=no
+if test "x$enable_omemo" != "xno"; then
+    PKG_CHECK_MODULES(LIBOMEMOC, [libomemo-c >= 0.5.0],
+        [OMEMO_CFLAGS="$LIBOMEMOC_CFLAGS"; OMEMO_LIBS="$LIBOMEMOC_LIBS"
+         omemo_lib=libomemo-c],
+        [PKG_CHECK_MODULES(LIBSIGNAL, [libsignal-protocol-c >= 2.3.2],
+            [OMEMO_CFLAGS="$LIBSIGNAL_CFLAGS"; OMEMO_LIBS="$LIBSIGNAL_LIBS"
+             omemo_lib=libsignal-protocol-c],
+            [omemo_lib=""])])
+    if test -n "$omemo_lib"; then
+        PKG_CHECK_MODULES(GCRYPT, [libgcrypt >= 1.7.0],
+            [omemo_found=yes
+             OMEMO_CFLAGS="$OMEMO_CFLAGS $GCRYPT_CFLAGS"
+             OMEMO_LIBS="$OMEMO_LIBS $GCRYPT_LIBS"],
+            [omemo_found=no])
+    fi
+    if test "x$omemo_found" = "xyes"; then
+        AC_DEFINE([HAVE_OMEMO], 1, [Define if OMEMO encryption is enabled])
+        AC_MSG_NOTICE([OMEMO support enabled (using $omemo_lib)])
+    elif test "x$enable_omemo" = "xyes"; then
+        AC_MSG_ERROR([OMEMO needs libomemo-c (or libsignal-protocol-c) and libgcrypt.])
+    fi
+fi
+AC_SUBST(OMEMO_CFLAGS)
+AC_SUBST(OMEMO_LIBS)
+AM_CONDITIONAL([OMEMO], [test x$omemo_found = xyes])
+
 # Check for Enchant stuff
 AC_ARG_ENABLE(enchant,
               AS_HELP_STRING([--enable-enchant], [enable enchant support]),

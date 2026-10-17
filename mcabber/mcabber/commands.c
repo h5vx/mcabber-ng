@@ -42,6 +42,9 @@
 #include "xmpp.h"
 #include "main.h"
 #include "mlua.h"
+#ifdef HAVE_OMEMO
+# include "omemo.h"
+#endif
 
 #define IMSTATUS_AWAY           "away"
 #define IMSTATUS_ONLINE         "online"
@@ -95,6 +98,9 @@ static void do_members(char *arg);
 static void do_console(char *arg);
 static void do_module(char *arg);
 static void do_carbons(char *arg);
+#ifdef HAVE_OMEMO
+static void do_omemo(char *arg);
+#endif
 
 static void room_bookmark(gpointer bud, char *arg);
 
@@ -217,6 +223,10 @@ void cmd_init(void)
           0, &do_move, NULL);
   cmd_add("msay", "Send a multi-lines message to the selected buddy",
           COMPL_MULTILINE, 0, &do_msay, NULL);
+#ifdef HAVE_OMEMO
+  cmd_add("omemo", "Manage OMEMO encryption", COMPL_OMEMO, COMPL_JID,
+          &do_omemo, NULL);
+#endif
   cmd_add("otr", "Manage OTR settings", COMPL_OTR, COMPL_JID, &do_otr, NULL);
   cmd_add("otrpolicy", "Manage OTR policies", COMPL_JID, COMPL_OTRPOLICY,
           &do_otrpolicy, NULL);
@@ -402,6 +412,18 @@ void cmd_init(void)
   compl_add_category_word(COMPL_CARBONS, "info");
   compl_add_category_word(COMPL_CARBONS, "enable");
   compl_add_category_word(COMPL_CARBONS, "disable");
+
+  // OMEMO category
+  compl_add_category_word(COMPL_OMEMO, "info");
+  compl_add_category_word(COMPL_OMEMO, "own");
+  compl_add_category_word(COMPL_OMEMO, "on");
+  compl_add_category_word(COMPL_OMEMO, "off");
+  compl_add_category_word(COMPL_OMEMO, "default");
+  compl_add_category_word(COMPL_OMEMO, "trust");
+  compl_add_category_word(COMPL_OMEMO, "distrust");
+  compl_add_category_word(COMPL_OMEMO, "forget");
+  compl_add_category_word(COMPL_OMEMO, "fetch");
+  compl_add_category_word(COMPL_OMEMO, "cleanup");
 }
 
 //  expandalias(line)
@@ -2631,6 +2653,13 @@ static void do_console(char *arg)
 {
   scr_console(arg);
 }
+
+#ifdef HAVE_OMEMO
+static void do_omemo(char *arg)
+{
+  omemo_command(arg);
+}
+#endif
 
 static void do_quit(char *arg)
 {

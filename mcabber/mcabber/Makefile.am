@@ -32,12 +32,22 @@ if OTR
 mcabber_ng_SOURCES += otr.c otr.h nohtml.c nohtml.h
 endif
 
-LDADD = libmcpure.a $(GLIB_LIBS) $(LOUDMOUTH_LIBS) $(GPGME_LIBS) \
-				$(LIBOTR_LIBS) $(ENCHANT_LIBS) $(LIBIDN_LIBS) $(LUA_LIBS)
+# OMEMO: the key store and the cryptography are also used by the tests
+if OMEMO
+noinst_LIBRARIES += libomemocore.a
+libomemocore_a_SOURCES = omemo_core.c omemo_core.h
+libomemocore_a_CPPFLAGS = $(GLIB_CFLAGS) $(OMEMO_CFLAGS)
+mcabber_ng_SOURCES += omemo.c omemo.h
+OMEMO_LDADD = libomemocore.a
+endif
+
+LDADD = libmcpure.a $(OMEMO_LDADD) $(GLIB_LIBS) $(LOUDMOUTH_LIBS) \
+				$(GPGME_LIBS) $(LIBOTR_LIBS) $(OMEMO_LIBS) \
+				$(ENCHANT_LIBS) $(LIBIDN_LIBS) $(LUA_LIBS)
 
 AM_CPPFLAGS = -I$(top_builddir) -I$(top_srcdir) \
 				$(GLIB_CFLAGS) $(LOUDMOUTH_CFLAGS) \
-				$(GPGME_CFLAGS) $(LIBOTR_CFLAGS) \
+				$(GPGME_CFLAGS) $(LIBOTR_CFLAGS) $(OMEMO_CFLAGS) \
 				$(ENCHANT_CFLAGS) $(LIBIDN_CFLAGS) $(LUA_CFLAGS)
 
 CLEANFILES = hgcset.h mlua_prelude.h

@@ -775,7 +775,7 @@ it cannot (un)register accounts yet.</p></div>
 </li>
 <li>
 <p>
-<em>PGP, OTR support</em>
+<em>OMEMO, PGP, OTR support</em> (OMEMO: end-to-end encryption of one-to-one chats)
 </p>
 </li>
 <li>
@@ -2290,6 +2290,99 @@ Leave multi-line mode without sending the message
 </dl></div>
 </dd>
 <dt class="hdlist1">
+/omemo [info|own|on|off|default|trust|distrust|forget|fetch|cleanup] [jid] [device|fingerprint]
+</dt>
+<dd>
+<p>
+        OMEMO end-to-end encryption of one-to-one chats (XEP-0384, version 0.3 "eu.siacs.conversations.axolotl", the one used by Conversations, Dino, Gajim and Profanity).  Rooms are not supported.  The keys are kept in ~/.config/mcabber-ng/omemo/.<br>
+        With the default policy ("omemo_policy" option set to "auto"), messages to a contact are encrypted when the contact publishes OMEMO devices.  When the device list of a contact is not known yet, it is fetched before the message is sent; if the contact turns out not to use OMEMO, the message is not sent and the next one is sent unencrypted.  An encrypted message is never sent in plain text: if it cannot be encrypted, an error is displayed in the chat window.<br>
+        New devices are trusted automatically (Blind Trust Before Verification), until you verify a device of the contact with "/omemo trust": then new devices of this contact must be trusted by hand.  Set "omemo_trust" to "manual" to trust every device by hand.<br>
+        When jid is omitted, the current buddy is used.  A device is designated by its ID or by its fingerprint (at least its first 8 digits).
+</p>
+<div class="dlist"><dl>
+<dt class="hdlist1">
+<em>info</em> [jid]
+</dt>
+<dd>
+<p>
+Show whether messages to jid are encrypted, and its devices with their trust level and fingerprint (without jid and buddy: this device)
+</p>
+</dd>
+<dt class="hdlist1">
+<em>own</em>
+</dt>
+<dd>
+<p>
+Show this device, its fingerprint and the other devices of your account
+</p>
+</dd>
+<dt class="hdlist1">
+<em>on</em> [jid]
+</dt>
+<dd>
+<p>
+Always encrypt messages to jid (never send them unencrypted)
+</p>
+</dd>
+<dt class="hdlist1">
+<em>off</em> [jid]
+</dt>
+<dd>
+<p>
+Never encrypt messages to jid
+</p>
+</dd>
+<dt class="hdlist1">
+<em>default</em> [jid]
+</dt>
+<dd>
+<p>
+Follow the "omemo_policy" option for jid
+</p>
+</dd>
+<dt class="hdlist1">
+<em>trust</em> [jid] device|fingerprint
+</dt>
+<dd>
+<p>
+Mark the device as verified (compare the fingerprint with the contact first)
+</p>
+</dd>
+<dt class="hdlist1">
+<em>distrust</em> [jid] device|fingerprint
+</dt>
+<dd>
+<p>
+Never encrypt for this device, and refuse its messages
+</p>
+</dd>
+<dt class="hdlist1">
+<em>forget</em> [jid] device|fingerprint
+</dt>
+<dd>
+<p>
+Forget the keys and the session of the device
+</p>
+</dd>
+<dt class="hdlist1">
+<em>fetch</em> [jid]
+</dt>
+<dd>
+<p>
+Fetch the device list and the keys of jid again
+</p>
+</dd>
+<dt class="hdlist1">
+<em>cleanup</em>
+</dt>
+<dd>
+<p>
+Publish a device list that contains only this device (removes the old devices of your account)
+</p>
+</dd>
+</dl></div>
+</dd>
+<dt class="hdlist1">
 /otr key
 </dt>
 <dt class="hdlist1">
@@ -3166,7 +3259,7 @@ message_in
         A message has been received, before it is displayed and logged.
         Fields: jid, resource, nick (rooms), text, muc (room message),
         private (private message from a room participant), time, delayed,
-        carbon, error, encrypted ("pgp", "otr" or nil).  The handlers can
+        carbon, error, encrypted ("omemo", "pgp", "otr" or nil).  The handlers can
         change <em>text</em>.  mc.DROP drops the message.
 </p>
 </dd>
@@ -3331,7 +3424,8 @@ mc.format.indent
 rooms and for actions, contact or own username otherwise), kind, and the
 flags me (action, "/me"), muc, private (private message in a room),
 delayed, receipt (waiting for a receipt), carbon, highlight, own (your
-message in a room), pgp, otr, encrypted, in, out, info, error, special.</p></div>
+message in a room), omemo, pgp, otr, encrypted, in, out, info, error,
+special.</p></div>
 <div class="paragraph"><p>The default format is:</p></div>
 <div class="literalblock">
 <div class="content monospaced">
@@ -3425,7 +3519,8 @@ sub_from, sub_to.</pre>
 <pre>Chat status fields: name, jid, resource, type, type_name, status,
 status_char, icon, msg (status message or room topic), chatstate
 (active, composing, paused, inactive, gone), chatmode, locked,
-unread.</pre>
+unread, encryption ("omemo" when the next message will be
+encrypted).</pre>
 </div></div>
 <div class="literalblock">
 <div class="content monospaced">
@@ -3528,6 +3623,7 @@ are only available with terminals that report them (CSI u / modifyOtherKeys).</p
 <pre>$HOME/.config/mcabber-ng/init.lua   Default configuration file (uses XDG_CONFIG_HOME)
 $HOME/.config/mcabber-ng/lua/       Lua modules directory (for require)
 $HOME/.config/mcabber-ng/histo/     Default directory for storing chat history files, if enabled
+$HOME/.config/mcabber-ng/omemo/     OMEMO keys, sessions and trust (one directory per account)
 /usr/share/mcabber-ng/help/         Default directory for online help files
 /usr/share/mcabber-ng/init.lua.example  Sample configuration file
 /usr/lib/mcabber-ng/                Default directory for modules</pre>
@@ -3570,7 +3666,7 @@ License (GPL).</p></div>
 <div id="footer-text">
 Version 1.0.0<br>
 Last updated
- 2026-10-17 20:01:45 WITA
+ 2026-10-17 20:35:07 WITA
 </div>
 </div>
 </body>

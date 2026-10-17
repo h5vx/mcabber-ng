@@ -45,6 +45,9 @@
 #include "events.h"
 #include "compl.h"
 #include "mlua.h"
+#ifdef HAVE_OMEMO
+# include "omemo.h"
+#endif
 #include "msgformat.h"
 
 #ifndef MODULES_ENABLE
@@ -645,6 +648,9 @@ int main(int argc, char **argv)
   otr_terminate();
 #endif
   xmpp_disconnect();
+#ifdef HAVE_OMEMO
+  omemo_deinit();
+#endif
 #ifdef HAVE_GPGME
   gpg_terminate();
 #endif

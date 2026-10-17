@@ -16,6 +16,7 @@ set -eu
 
 VERSION=${1:-dev}
 LOUDMOUTH_VERSION=1.5.4
+LIBOMEMO_C_VERSION=0.5.1
 SRC=$(pwd)
 OUT=${OUT:-$SRC/dist}
 DEPS=/opt/deps
@@ -27,7 +28,9 @@ apk add --no-cache \
   gettext-dev gettext-static \
   ncurses-dev ncurses-static \
   glib-dev glib-static libffi-dev pcre2-dev \
-  openssl-dev openssl-libs-static zlib-dev zlib-static
+  openssl-dev openssl-libs-static zlib-dev zlib-static \
+  cmake libgcrypt-dev libgcrypt-static libgpg-error-dev libgpg-error-static \
+  protobuf-c-dev
 
 # LuaJIT is not available on every architecture
 if apk add --no-cache luajit-dev; then
@@ -51,6 +54,17 @@ find . -name Makefile -exec sed -i 's/-Werror//g' {} +
 make -j"$(nproc)"
 make install
 
+# libomemo-c (OMEMO), as a static library
+cd "$WORK"
+curl -fsSL -o libomemo-c.tar.gz \
+  "https://github.com/dino/libomemo-c/archive/refs/tags/v$LIBOMEMO_C_VERSION.tar.gz"
+tar xzf libomemo-c.tar.gz
+cmake -S "libomemo-c-$LIBOMEMO_C_VERSION" -B libomemo-c-build \
+  -DCMAKE_BUILD_TYPE=Release -DBUILD_SHARED_LIBS=OFF \
+  -DCMAKE_INSTALL_PREFIX="$DEPS"
+cmake --build libomemo-c-build -j"$(nproc)"
+cmake --install libomemo-c-build
+
 # mcabber-ng
 cp -a "$SRC/mcabber" "$WORK/mcabber-ng"
 # The version comes from the release tag
@@ -65,7 +79,8 @@ PKG_CONFIG_PATH="$DEPS/lib/pkgconfig" \
 LDFLAGS="-static" \
 LIBS="$(pkg-config --static --libs gobject-2.0 glib-2.0)" \
   ./configure --prefix=/usr/local --with-lua="$LUA" \
-    --disable-modules --disable-gpgme --without-libidn --disable-hgcset
+    --disable-modules --disable-gpgme --without-libidn --disable-hgcset \
+    --enable-omemo=yes
 # libtool needs -all-static to link a fully static program
 make -j"$(nproc)" LDFLAGS="-all-static"
 make check LDFLAGS="-all-static"

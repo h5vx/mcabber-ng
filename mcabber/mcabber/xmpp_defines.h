@@ -63,6 +63,8 @@
 
 #define NS_CARBONS_2  "urn:xmpp:carbons:2" // XEP-0280 (message carbons)
 #define NS_FORWARD    "urn:xmpp:forward:0" // XEP-0297 (stanza forwarding)
+#define NS_PUBSUB     "http://jabber.org/protocol/pubsub"
+#define NS_PUBSUB_EVENT "http://jabber.org/protocol/pubsub#event"
 
 #define NS_JABBERD_STOREDPRESENCE "http://jabberd.org/ns/storedpresence"
 #define NS_JABBERD_HISTORY "http://jabberd.org/ns/history"

@@ -26,6 +26,9 @@ safe pasting and a modern, themable interface.
   of mcabber.
 - **Room members panel** — next to the chat window, or over it.
 - **XMPP console** — watch the XML stream and send raw stanzas.
+- **OMEMO** — end-to-end encryption of one-to-one chats, compatible with
+  Conversations, Dino, Gajim and Profanity; messages are encrypted
+  automatically for contacts who use it.
 - All the features of mcabber: MUC, PGP, OTR, history logging, chat
   states, message carbons, delivery receipts, modules…
 
@@ -69,13 +72,14 @@ sudo tar -C /usr/local -xzf mcabber-ng-*-linux-x86_64-static.tar.gz
 ### Building from source
 
 Dependencies: GLib, ncursesw, Loudmouth, LuaJIT (or Lua 5.1), and
-optionally GPGME, libidn, Enchant (spell checking) and libotr.
+optionally libomemo-c (or libsignal-protocol-c) with libgcrypt for OMEMO,
+GPGME, libidn, Enchant (spell checking) and libotr.
 
 ```sh
 # Debian / Ubuntu
 sudo apt install autoconf automake libtool pkg-config libncurses-dev \
   libglib2.0-dev libloudmouth1-dev libluajit-5.1-dev libgpgme-dev \
-  libidn-dev libenchant-2-dev
+  libidn-dev libenchant-2-dev libomemo-c-dev libgcrypt20-dev
 
 cd mcabber
 ./autogen.sh
@@ -216,6 +220,7 @@ All the mcabber commands are available (`/help` lists them). New ones:
 | `/members [show\|hide\|toggle]` | Members of the current room |
 | `/console [show\|hide\|toggle\|clear]` | XMPP console; text typed while it is displayed is sent as raw XML |
 | `/bind KEY = COMMAND` | Bind a key, by name |
+| `/omemo [info\|on\|off\|trust…]` | OMEMO encryption: devices, fingerprints, trust |
 
 ## Documentation
 

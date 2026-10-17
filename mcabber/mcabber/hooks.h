@@ -8,6 +8,7 @@
 // These two defines are used by hk_message_{in,out} arguments
 #define ENCRYPTED_PGP   1
 #define ENCRYPTED_OTR   2
+#define ENCRYPTED_OMEMO 3
 
 #include <mcabber/config.h>
 #ifdef MODULES_ENABLE

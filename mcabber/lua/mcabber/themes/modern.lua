@@ -88,6 +88,7 @@ local theme = {
   input_prompt     = { fg = c.blue, bold = true },
   dim              = { fg = c.fg_dim },
   accent           = { fg = c.blue },
+  encrypted        = { fg = c.green },
 
   format = {
     time = "%H:%M",
@@ -96,10 +97,12 @@ local theme = {
                .. "{?private}{#accent}⇢{#} {/}"
                .. "{?me}{#nick}* {nick}{#} {/}"
                .. "{?muc}{!me}{#nick}{nick}{#}{#dim}:{#} {/}{/}"
-               .. "{!muc}{!me}{#dim}›{#} {/}{/}",
+               .. "{!muc}{!me}{?encrypted}{#encrypted}›{#}{/}"
+               .. "{!encrypted}{#dim}›{#}{/} {/}{/}",
       out    = "{#timestamp}{time}{#} "
                .. "{?me}{#nick_self}* {nick}{#} {/}"
-               .. "{!me}{#nick_self}‹{#} {/}"
+               .. "{!me}{?encrypted}{#encrypted}‹{#}{/}"
+               .. "{!encrypted}{#nick_self}‹{#}{/} {/}"
                .. "{?receipt}{#dim}…{#}{/}",
       info   = "{#timestamp}{time}{#} {#info}•{#} ",
       error  = "{#timestamp}{time}{#} {#status_dnd}!{#} ",
@@ -126,7 +129,8 @@ local theme = {
                   .. "{?icon}{#status_$status}{icon}{#} {/}{#title}{name:*}{#}"
                   .. "{?resource}{#dim}/{resource}{#}{/}"
                   .. "{?msg} {#dim}— {msg:*}{#}{/} "
-                  .. "{>}{?chatstate} {#dim}{chatstate}{#} {/}",
+                  .. "{>}{?chatstate} {#dim}{chatstate}{#} {/}"
+                  .. "{?encryption}{#encrypted}{encryption}{#} {/}",
     input_prompt = "{#input_prompt}{?command}:{/}{!command}❯{/}{#} ",
     main_status = " {#isl_cap_$status}"
                   .. L .. "{#}{#isl_$status}{icon} {status}{#}"

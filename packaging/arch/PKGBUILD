@@ -6,7 +6,8 @@ pkgdesc="Jabber (XMPP) console client configured in Lua (fork of mcabber)"
 arch=('x86_64' 'aarch64')
 url="https://github.com/h5vx/mcabber-ng"
 license=('GPL-2.0-or-later')
-depends=('ncurses' 'glib2' 'loudmouth' 'luajit' 'gpgme' 'libidn' 'enchant')
+depends=('ncurses' 'glib2' 'loudmouth' 'luajit' 'gpgme' 'libidn' 'enchant'
+         'libomemo-c' 'libgcrypt')
 makedepends=('autoconf' 'automake' 'libtool' 'pkgconf')
 options=('!libtool')
 source=()
@@ -14,7 +15,8 @@ source=()
 build() {
   cd "$startdir/src-tree"
   autoreconf -fi -I macros
-  ./configure --prefix=/usr --enable-enchant --disable-hgcset
+  ./configure --prefix=/usr --enable-enchant --enable-omemo=yes \
+    --disable-hgcset
   make
 }
 

@@ -10,7 +10,9 @@ Build-Depends: debhelper-compat (= 13),
                libluajit-5.1-dev | libluajit2-5.1-dev | liblua5.1-0-dev,
                libgpgme-dev,
                libidn-dev,
-               libenchant-2-dev
+               libenchant-2-dev,
+               libomemo-c-dev | libsignal-protocol-c-dev,
+               libgcrypt20-dev
 Standards-Version: 4.6.2
 Homepage: https://github.com/h5vx/mcabber-ng
 Rules-Requires-Root: no
@@ -24,4 +26,5 @@ Description: Jabber (XMPP) console client configured in Lua
  readable names, event handlers, message and interface formats, themes.
  .
  It supports multi-line messages, does not send pasted text line by line,
- and has a configurable interface with frames and 256/24-bit colors.
+ has a configurable interface with frames and 256/24-bit colors, and
+ OMEMO end-to-end encryption.

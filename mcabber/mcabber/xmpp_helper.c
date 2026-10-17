@@ -28,6 +28,9 @@
 #include "caps.h"
 #include "logprint.h"
 #include "config.h"
+#ifdef HAVE_OMEMO
+# include "omemo.h"
+#endif
 
 time_t iqlast; // last message/status change time
 
@@ -243,6 +246,11 @@ const char *entity_version(enum imstatus status)
       (!settings_opt_get_int("iq_last_disable_when_notavail") ||
        status != notavail))
     caps_add_feature("", NS_LAST);
+#ifdef HAVE_OMEMO
+  // Get the OMEMO device lists of our contacts (PEP notifications)
+  if (omemo_enabled())
+    caps_add_feature("", OMEMO_NOTIFY_FEATURE);
+#endif
 #ifdef MODULES_ENABLE
   {
     GSList *el = xmpp_additional_features;

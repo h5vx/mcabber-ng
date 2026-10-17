@@ -18,3 +18,11 @@ test_paste_SOURCES = test_paste.c
 test_fmt_SOURCES = test_fmt.c
 test_style_SOURCES = test_style.c
 test_xmlsplit_SOURCES = test_xmlsplit.c
+
+if OMEMO
+check_PROGRAMS += test_omemo
+test_omemo_SOURCES = test_omemo.c
+test_omemo_CPPFLAGS = $(AM_CPPFLAGS) $(OMEMO_CFLAGS)
+test_omemo_LDADD = $(top_builddir)/mcabber/libomemocore.a $(OMEMO_LIBS) \
+		   $(GLIB_LIBS)
+endif
