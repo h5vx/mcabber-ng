@@ -231,7 +231,7 @@ static void credits(void)
 
 static void compile_options(void)
 {
-  puts("Installation data directory: " DATA_DIR "\n");
+  printf("Installation data directory: %s\n\n", settings_get_data_dir());
   puts("Embedded Lua: " MCABBER_LUA_IMPL);
 #ifdef HAVE_UNICODE
   puts("Compiled with unicode support.");

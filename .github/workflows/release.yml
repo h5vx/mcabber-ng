@@ -1,5 +1,5 @@
-# Build packages for several Linux distributions and static binaries for
-# several architectures.  When a "v*" tag is pushed, a GitHub release is
+# Build static binaries for several architectures, with a Debian/Ubuntu
+# package of each (for any release), and packages for Fedora and Arch.  When a "v*" tag is pushed, a GitHub release is
 # created with all the files.  The workflow can also be started manually
 # (the files are then only available as artifacts).
 name: Release
@@ -35,14 +35,6 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          - { image: 'debian:12',        family: deb,  dist: debian12,     arch: amd64 }
-          - { image: 'debian:12',        family: deb,  dist: debian12,     arch: arm64 }
-          - { image: 'debian:13',        family: deb,  dist: debian13,     arch: amd64 }
-          - { image: 'debian:13',        family: deb,  dist: debian13,     arch: arm64 }
-          - { image: 'ubuntu:22.04',     family: deb,  dist: ubuntu22.04,  arch: amd64 }
-          - { image: 'ubuntu:22.04',     family: deb,  dist: ubuntu22.04,  arch: arm64 }
-          - { image: 'ubuntu:24.04',     family: deb,  dist: ubuntu24.04,  arch: amd64 }
-          - { image: 'ubuntu:24.04',     family: deb,  dist: ubuntu24.04,  arch: arm64 }
           - { image: 'fedora:42',        family: rpm,  dist: fedora42,     arch: amd64 }
           - { image: 'fedora:42',        family: rpm,  dist: fedora42,     arch: arm64 }
           - { image: 'archlinux:latest', family: arch, dist: archlinux,    arch: amd64 }
@@ -83,6 +75,13 @@ jobs:
             -v "$PWD:/src" -w /src -e OUT=/src/dist -e ARCH="${{ matrix.arch }}" \
             alpine:3.21 \
             sh packaging/static/build.sh "${{ needs.version.outputs.version }}"
+      # One Debian/Ubuntu package for every release, from the static binary
+      - name: Build the Debian package
+        run: |
+          sudo chown -R "$(id -u)" dist
+          sh packaging/static/make-deb.sh "${{ needs.version.outputs.version }}" \
+            "${{ matrix.arch }}" \
+            dist/mcabber-ng-*-linux-${{ matrix.arch }}-static.tar.gz
       - uses: actions/upload-artifact@v4
         with:
           name: static-${{ matrix.arch }}
