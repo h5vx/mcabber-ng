@@ -24,6 +24,7 @@
 #include <unistd.h>
 
 #include "hooks.h"
+#include "xmpp_muc.h"
 #include "screen.h"
 #include "roster.h"
 #include "histolog.h"
@@ -280,6 +281,10 @@ static void hk_message_in_real(const char *bjid, const char *resname,
 
   if (carbon)
     message_flags |= HBB_PREFIX_CARBON;
+
+  // The history of a room joined for the first time is not "unread"
+  if (type == LM_MESSAGE_SUB_TYPE_GROUPCHAT && timestamp && muc_backlog(bjid))
+    message_flags |= HBB_PREFIX_NOFLAG;
 
   if (type == LM_MESSAGE_SUB_TYPE_GROUPCHAT) {
     rtype = ROSTER_TYPE_ROOM;

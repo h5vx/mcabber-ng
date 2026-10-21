@@ -99,6 +99,7 @@ static void do_members(char *arg);
 static void do_console(char *arg);
 static void do_url(char *arg);
 static void do_editor(char *arg);
+static void do_bookmarks(char *arg);
 static void do_module(char *arg);
 static void do_carbons(char *arg);
 #ifdef HAVE_OMEMO
@@ -223,6 +224,8 @@ void cmd_init(void)
   cmd_add("url", "Open a link of the chat window", 0, 0, &do_url, NULL);
   cmd_add("editor", "Edit the input line in an external editor", 0, 0,
           &do_editor, NULL);
+  cmd_add("bookmarks", "Show and edit the room bookmarks", COMPL_BOOKMARKS,
+          COMPL_JID, &do_bookmarks, NULL);
   cmd_add("module", "Manipulations with modules", COMPL_MODULE, 0, &do_module,
           NULL);
   cmd_add("move", "Move the current buddy to another group", COMPL_GROUPNAME,
@@ -418,6 +421,10 @@ void cmd_init(void)
   compl_add_category_word(COMPL_CARBONS, "info");
   compl_add_category_word(COMPL_CARBONS, "enable");
   compl_add_category_word(COMPL_CARBONS, "disable");
+
+  // Bookmarks category
+  compl_add_category_word(COMPL_BOOKMARKS, "set");
+  compl_add_category_word(COMPL_BOOKMARKS, "del");
 
   // OMEMO category
   compl_add_category_word(COMPL_OMEMO, "info");
@@ -2670,6 +2677,110 @@ static void do_editor(char *arg)
   editor_command_run(arg);
 }
 
+static gboolean parse_bool(const char *v, gboolean *b)
+{
+  if (!g_ascii_strcasecmp(v, "on") || !g_ascii_strcasecmp(v, "yes") ||
+      !g_ascii_strcasecmp(v, "true") || !strcmp(v, "1"))
+    *b = TRUE;
+  else if (!g_ascii_strcasecmp(v, "off") || !g_ascii_strcasecmp(v, "no") ||
+           !g_ascii_strcasecmp(v, "false") || !strcmp(v, "0"))
+    *b = FALSE;
+  else
+    return FALSE;
+  return TRUE;
+}
+
+//  /bookmarks
+//  /bookmarks set room@server [name=...] [nick=...] [password=...]
+//                             [autojoin=on|off]
+//  /bookmarks del room@server
+static void do_bookmarks(char *arg)
+{
+  gchar **argv = NULL;
+  gchar *jid = NULL;
+  GError *err = NULL;
+  int argc = 0, i;
+
+  if (!arg || !*arg) {
+    scr_bookmarks();
+    return;
+  }
+  if (!g_shell_parse_argv(arg, &argc, &argv, &err)) {
+    scr_LogPrint(LPRINT_NORMAL, "/bookmarks: %s", err->message);
+    g_error_free(err);
+    return;
+  }
+  if (argc < 2 || (strcmp(argv[0], "set") && strcmp(argv[0], "del"))) {
+    scr_LogPrint(LPRINT_NORMAL, "Usage: /bookmarks [set|del room@server "
+                 "[name=... nick=... password=... autojoin=on|off]]");
+    goto done;
+  }
+  jid = jidtodisp(argv[1]);
+  if (check_jid_syntax(jid) || !strchr(jid, JID_DOMAIN_SEPARATOR)) {
+    scr_LogPrint(LPRINT_NORMAL, "<%s> is not a valid room.", argv[1]);
+    goto done;
+  }
+
+  if (!strcmp(argv[0], "del")) {
+    xmpp_set_storage_bookmark(jid, NULL, NULL, NULL, 0, 0, 0, 0, NULL);
+  } else {
+    // The current values, changed by the arguments
+    gchar *name = NULL, *nick = g_strdup(xmpp_get_bookmark_nick(jid));
+    gchar *passwd = g_strdup(xmpp_get_bookmark_password(jid));
+    gboolean autojoin = xmpp_get_bookmark_autojoin(jid);
+    gboolean ok = TRUE;
+    GSList *all = xmpp_get_all_storage_bookmarks(), *l;
+
+    for (l = all; l; l = l->next) {
+      struct bookmark *b = l->data;
+      if (!name && jid_equal(b->roomjid, jid))
+        name = g_strdup(b->name);
+      g_free(b->roomjid);
+      g_free(b->name);
+      g_free(b->nick);
+      g_free(b->password);
+      g_free(b);
+    }
+    g_slist_free(all);
+
+    for (i = 2; i < argc && ok; i++) {
+      char *eq = strchr(argv[i], '=');
+      gchar **field = NULL;
+      if (!eq) {
+        ok = FALSE;
+        break;
+      }
+      *eq++ = '\0';
+      if (!strcmp(argv[i], "name"))
+        field = &name;
+      else if (!strcmp(argv[i], "nick"))
+        field = &nick;
+      else if (!strcmp(argv[i], "password"))
+        field = &passwd;
+      else if (!strcmp(argv[i], "autojoin"))
+        ok = parse_bool(eq, &autojoin);
+      else
+        ok = FALSE;
+      if (field) {
+        g_free(*field);
+        *field = g_strdup(eq);
+      }
+    }
+    if (!ok)
+      scr_LogPrint(LPRINT_NORMAL, "/bookmarks set: invalid argument \"%s\".",
+                   argv[i]);
+    else
+      xmpp_bookmark_set(jid, name, nick, passwd, autojoin);
+    g_free(name);
+    g_free(nick);
+    g_free(passwd);
+  }
+
+done:
+  g_free(jid);
+  g_strfreev(argv);
+}
+
 #ifdef HAVE_OMEMO
 static void do_omemo(char *arg)
 {
@@ -3395,7 +3506,7 @@ static void room_bookmark(gpointer bud, char *arg)
 {
   const char *roomid;
   const char *name = NULL, *nick = NULL, *passwd = NULL, *group = NULL;
-  char *tmpnick = NULL;
+  char *tmpnick = NULL, *tmppasswd = NULL;
   enum room_autowhois autowhois = 0;
   enum room_flagjoins flagjoins = 0;
   enum room_printstatus printstatus = 0;
@@ -3428,7 +3539,7 @@ static void room_bookmark(gpointer bud, char *arg)
         nick_set = 1;
         nick = tmpnick = to_utf8 (*pp);
       } else if (nick_set == 1) {
-        passwd = to_utf8(*pp);
+        passwd = tmppasswd = to_utf8(*pp);
       }
     }
     free_arg_lst(paramlst);
@@ -3446,6 +3557,9 @@ static void room_bookmark(gpointer bud, char *arg)
     if (!autojoin_set) {
       autojoin = xmpp_get_bookmark_autojoin(roomid);
     }
+    // Keep the password of the room
+    if (!passwd)
+      passwd = tmppasswd = g_strdup(xmpp_get_bookmark_password(roomid));
     printstatus = buddy_getprintstatus(bud);
     autowhois   = buddy_getautowhois(bud);
     flagjoins   = buddy_getflagjoins(bud);
@@ -3455,6 +3569,7 @@ static void room_bookmark(gpointer bud, char *arg)
   xmpp_set_storage_bookmark(roomid, name, nick, passwd, autojoin,
                             printstatus, autowhois, flagjoins, group);
   g_free(tmpnick);
+  g_free(tmppasswd);
 }
 
 static void display_all_bookmarks(void)
@@ -4397,7 +4512,7 @@ static void do_connect(char *arg)
 
 static void do_disconnect(char *arg)
 {
-  xmpp_disconnect();
+  xmpp_go_offline();
 }
 
 static void do_help(char *arg)

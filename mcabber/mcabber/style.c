@@ -52,6 +52,16 @@ gboolean style_parse_color(const char *s, style_color_t *c, GError **err)
     c->value = 0;
     return TRUE;
   }
+  {
+    // The backgrounds of the theme, whatever they are
+    static const char *refs[] = { "background", "bgstatus", "bgrostersel" };
+    for (i = 0; i < (int)G_N_ELEMENTS(refs); i++)
+      if (!g_ascii_strcasecmp(s, refs[i])) {
+        c->kind = STYLE_COLOR_REF;
+        c->value = i;
+        return TRUE;
+      }
+  }
   if (*s == '#') {
     if (strlen(s) != 7)
       goto invalid;

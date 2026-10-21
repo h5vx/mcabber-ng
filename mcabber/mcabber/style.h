@@ -16,8 +16,13 @@ typedef enum {
   STYLE_COLOR_UNSET = 0,    // Not specified
   STYLE_COLOR_DEFAULT,      // Terminal default color
   STYLE_COLOR_INDEX,        // Palette color (0-255)
-  STYLE_COLOR_RGB           // 0xRRGGBB
+  STYLE_COLOR_RGB,          // 0xRRGGBB
+  STYLE_COLOR_REF           // A background of the theme (STYLE_REF_*)
 } style_color_kind_t;
+
+#define STYLE_REF_BACKGROUND  0   // "background"
+#define STYLE_REF_BGSTATUS    1   // "bgstatus"
+#define STYLE_REF_BGROSTERSEL 2   // "bgrostersel"
 
 typedef struct {
   style_color_kind_t kind;

@@ -29,8 +29,9 @@
 #define COMPL_MODULE      22
 #define COMPL_CARBONS     23
 #define COMPL_OMEMO       24
+#define COMPL_BOOKMARKS   25
 /* private */
-#define COMPL_MAX_ID      24
+#define COMPL_MAX_ID      25
 
 void compl_init_system(void); /* private */
 

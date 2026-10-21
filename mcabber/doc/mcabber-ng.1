@@ -4,10 +4,10 @@
 .\" Generator: DocBook XSL Stylesheets vsnapshot <http://docbook.sf.net/>
 .\"      Date: October 2026
 .\"    Manual: \ \&
-.\"    Source: \ \& 1.0.0
+.\"    Source: \ \& 1.1.0
 .\"  Language: English
 .\"
-.TH "MCABBER\-NG" "1" "October 2026" "\ \& 1\&.0\&.0" "\ \&"
+.TH "MCABBER\-NG" "1" "October 2026" "\ \& 1\&.1\&.0" "\ \&"
 .\" -----------------------------------------------------------------
 .\" * Define some portability stuff
 .\" -----------------------------------------------------------------
@@ -796,6 +796,10 @@ removes the mode from given JID, which means the global one will apply\&. You ca
 /connect
 .RS 4
 Establish connection to the Jabber server\&.
+
+When the connection is lost (or cannot be established), mcabber\-ng connects again after 5 seconds, then 10 s, 30 s\&... up to 5 minutes between the attempts, unless the
+\fIautoreconnect\fR
+option is 0\&. After the computer has been suspended, the server is pinged and the connection is opened again if it doesn\(cqt answer\&. The rooms you were in are joined again\&.
 .RE
 .PP
 /del
@@ -805,7 +809,7 @@ Delete the current buddy from our roster, unsubscribe from its presence notifica
 .PP
 /disconnect
 .RS 4
-Terminate the connection to the Jabber server\&.
+Terminate the connection to the Jabber server (mcabber\-ng doesn\(cqt reconnect until /connect)\&.
 
 Note: the roster is only available when the connection to the server is active, so the buddylist is empty when disconnected\&.
 .RE
@@ -1554,6 +1558,8 @@ Without arguments prints a list of all set options with their values
 /source pattern
 .RS 4
 Run the Lua files that match the glob pattern (sorted in alphabetical order)\&.
+
+A file can be run again after it has been edited (e\&.g\&. "/source ~/\&.config/mcabber\-ng/init\&.lua"): the event handlers and timers created by its previous run are removed first, and the Lua modules are loaded again by require()\&. The options, key bindings and styles it no longer sets keep their values\&.
 .RE
 .PP
 /status [online|avail|free|dnd|notavail|away [\-|statusmessage]], /status message \-|statusmessage
@@ -1592,6 +1598,24 @@ Show or hide the members of the current room (see USER INTERFACE)\&.
 Display the XMPP console (see USER INTERFACE)\&.
 \fIclear\fR
 empties it\&.
+.RE
+.PP
+/bookmarks [set|del room [name=\&... nick=\&... password=\&... autojoin=on|off]]
+.RS 4
+Without arguments, display the bookmarks of rooms in a panel: Up/Down (or j/k) select a bookmark, Enter joins the room,
+\fIa\fR
+toggles the auto\-join,
+\fIe\fR
+puts a "/bookmarks set" command for the bookmark in the input line,
+\fIn\fR
+one for a new bookmark,
+\fId\fR
+(twice) deletes the bookmark, Escape closes the panel\&.
+
+\fIset\fR
+creates or changes the bookmark of a room; only the given fields change (an empty value removes the nickname or the password)\&.
+\fIdel\fR
+deletes it\&. Values with spaces are quoted: name=\fIMy room\fR\&.
 .RE
 .PP
 /editor [cancel]
@@ -1984,7 +2008,7 @@ mc\&.theme { general = "white", status = "black on cyan bold", \&.\&.\&. }
 .sp
 A style is a string of words: a foreground color, "on" and a background color, "fg=COLOR", "bg=COLOR", and attributes (bold, dim, italic, underline, reverse, blink, standout); or a table with the \fIfg\fR and \fIbg\fR fields and boolean attributes\&. Colors are default, black, red, green, yellow, blue, magenta, cyan, white (optionally prefixed by "bright"), a palette number (0\-255) or "#rrggbb"\&. Colors are approximated when the terminal has less colors\&. 24\-bit colors are used if the terminal supports them (e\&.g\&. TERM=xterm\-direct); the \fIui_colors\fR option ("auto", "8", "16", "256" or "truecolor") overrides the detection\&.
 .sp
-The styles of the interface are: general, msgin, msgout, msghl, info, timestamp, readmark, status (status lines), log, roster, rostersel (selected item), rosterselmsg, rosternewmsg, border, title, title_active, roster_group, roster_unread, status_online, status_free, status_away, status_notavail, status_dnd, status_invisible, status_offline, badge, nick_self, input, input_prompt, link_hint\&. The "background", "bgstatus" and "bgrostersel" entries are background colors\&. Any other name can be defined and used in formats ({#name})\&. The old color_* options still work for the first ones\&.
+The styles of the interface are: general, msgin, msgout, msghl, info, timestamp, readmark, status (status lines), log, roster, rostersel (selected item), rosterselmsg, rosternewmsg, border, title, title_active, roster_group, roster_unread, status_online, status_free, status_away, status_notavail, status_dnd, status_invisible, status_offline, badge, nick_self, input, input_prompt, link_hint\&. The "background", "bgstatus" and "bgrostersel" entries are background colors; these names can also be used as colors in the styles ("bg=bgstatus"), so that the styles follow them\&. Any other name can be defined and used in formats ({#name})\&. The old color_* options still work for the first ones\&.
 .sp
 mc\&.theme(t) sets the styles of the table t; its optional \fIoptions\fR and \fIformat\fR fields are passed to mc\&.set and mc\&.format\&.
 .SH "KEY NAMES"
@@ -2006,6 +2030,7 @@ $HOME/\&.config/mcabber\-ng/init\&.lua   Default configuration file (uses XDG_CO
 $HOME/\&.config/mcabber\-ng/lua/       Lua modules directory (for require)
 $HOME/\&.config/mcabber\-ng/histo/     Default directory for storing chat history files, if enabled
 $HOME/\&.config/mcabber\-ng/omemo/     OMEMO keys, sessions and trust (one directory per account)
+$HOME/\&.config/mcabber\-ng/rooms\&.ini  What has been seen of each room (last messages, topic), to avoid receiving the room history again
 /usr/share/mcabber\-ng/help/         Default directory for online help files
 /usr/share/mcabber\-ng/init\&.lua\&.example  Sample configuration file
 /usr/lib/mcabber\-ng/                Default directory for modules

@@ -23,6 +23,7 @@
 #include <sys/time.h>
 
 #include "xmpp_helper.h"
+#include "xmpp_muc.h"
 #include "xmpp_iq.h"
 #include "screen.h"
 #include "utils.h"
@@ -660,7 +661,10 @@ static void storage_bookmarks_parse_conference(LmMessageNode *node)
   // Is autojoin set?
   // If it is, we'll look up for more information (nick? password?) and
   // try to join the room.
-  if (autojoin && (!strcmp(autojoin, "1") || !strcmp(autojoin, "true"))) {
+  // (Not if we are joining the room again after a reconnection: the
+  // nickname may have been changed.)
+  if (autojoin && (!strcmp(autojoin, "1") || !strcmp(autojoin, "true")) &&
+      !muc_joined(bjid)) {
     const char *nick, *passwd;
     char *tmpnick = NULL;
     nick = lm_message_node_get_child_value(node, "nick");

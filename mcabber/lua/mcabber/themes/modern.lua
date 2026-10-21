@@ -9,12 +9,19 @@
 --   mc.theme(require("mcabber.themes.modern").with { caps = { "▐", "▌" } })
 --   mc.theme(require("mcabber.themes.modern").with { caps = false })  -- none
 --
+-- The background can be changed, e.g. to the one of the terminal
+-- (transparent):
+--   mc.theme(require("mcabber.themes.modern").with { bg = "default" })
+-- or afterwards with mc.theme { background = "default", bgstatus = "default" }:
+-- the elements of the theme follow these backgrounds.
+--
 -- The palette is inspired by "Tokyo Night".
 local function make(opts)
 opts = opts or {}
 
 local c = {
-  bg      = "#1a1b26",
+  bg      = opts.bg or "#1a1b26",
+  ink     = "#1a1b26",    -- Text on colored backgrounds
   bg_alt  = "#24283b",
   bg_sel  = "#2f3549",
   fg      = "#c0caf5",
@@ -62,7 +69,7 @@ local theme = {
   timestamp    = { fg = c.fg_dim },
   readmark     = { fg = c.red },
   log          = { fg = c.comment },
-  status       = { fg = c.fg, bg = c.bg },
+  status       = { fg = c.fg },
   roster       = { fg = c.fg },
   rostersel    = { fg = c.fg, bold = true },
   rosterselmsg = { fg = c.red, bold = true },
@@ -70,9 +77,9 @@ local theme = {
 
   border           = { fg = c.fg_dim },
   title            = { fg = c.blue, bold = true },
-  title_active     = { fg = c.blue, bg = c.bg },
+  title_active     = { fg = c.blue },
   nick_self        = { fg = c.cyan, bold = true },
-  badge            = { fg = c.bg, bg = c.yellow, bold = true },
+  badge            = { fg = c.ink, bg = c.yellow, bold = true },
   roster_group     = { fg = c.magenta, bold = true },
   roster_unread    = { fg = c.yellow, bold = true },
   status_online    = { fg = c.green },
@@ -149,8 +156,8 @@ local theme = {
 -- Islands: the content has a background color, the ends have it as
 -- foreground color on the background of the status line.
 local function island(name, bg, fg)
-  theme["isl" .. name] = { fg = fg or c.bg, bg = bg, bold = true }
-  theme["isl_cap" .. name] = { fg = bg, bg = c.bg }
+  theme["isl" .. name] = { fg = fg or c.ink, bg = bg, bold = true }
+  theme["isl_cap" .. name] = { fg = bg, bg = "bgstatus" }
 end
 island("", c.bg_sel, c.fg)
 island("_unread", c.yellow)

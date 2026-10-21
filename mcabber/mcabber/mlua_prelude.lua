@@ -115,6 +115,7 @@ function mc.on(event, fn, opts)
   end
   table.insert(list, pos, h)
   by_id[h.id] = h
+  mc._owned("handler", h.id)
   if hook then
     mc._hook(event)   -- Run the handlers when a module runs this hook
   end
@@ -223,6 +224,61 @@ mc.format = setmetatable({}, {
     mc._format_changed()
   end,
 })
+
+-- Reloading the configuration --------------------------------------------
+--
+-- When a file is loaded again (/source), what its previous load created
+-- (event handlers, timers) is removed first, and the modules loaded since
+-- the start are forgotten, so that require() reads them again.
+
+local loading = {}        -- Stack of the files being loaded
+local owned = {}          -- file -> list of { kind, id }
+local builtin_modules     -- Modules loaded before the configuration
+
+function mc._owned(kind, id)
+  local file = loading[#loading]
+  if file then
+    table.insert(owned[file], { kind = kind, id = id })
+  end
+end
+
+function mc._load_begin(file)
+  if not builtin_modules then
+    builtin_modules = {}
+    for name in pairs(package.loaded) do
+      builtin_modules[name] = true
+    end
+  else
+    for name in pairs(package.loaded) do
+      if not builtin_modules[name] then
+        package.loaded[name] = nil
+      end
+    end
+  end
+  for _, item in ipairs(owned[file] or {}) do
+    if item.kind == "handler" then
+      mc.off(item.id)
+    else
+      mc.cancel(item.id)
+    end
+  end
+  owned[file] = {}
+  table.insert(loading, file)
+end
+
+function mc._load_end()
+  table.remove(loading)
+end
+
+do
+  local timer = mc.timer
+  -- mc.timer(milliseconds, function [, repeat]) -> id
+  function mc.timer(...)
+    local id = timer(...)
+    mc._owned("timer", id)
+    return id
+  end
+end
 
 -- Themes ------------------------------------------------------------------
 

@@ -18,6 +18,7 @@ jobs:
     outputs:
       version: ${{ steps.version.outputs.version }}
     steps:
+      - uses: actions/checkout@v4
       - id: version
         run: |
           if [ "$GITHUB_REF_TYPE" = tag ]; then
@@ -26,6 +27,13 @@ jobs:
             version="0.0.0-dev.${GITHUB_SHA::7}"
           fi
           echo "version=$version" >> "$GITHUB_OUTPUT"
+      # A release needs its description in CHANGELOG.md: check it before
+      # building anything
+      - name: Release notes
+        if: github.ref_type == 'tag' && !contains(steps.version.outputs.version, '-')
+        run: |
+          sh packaging/release-notes.sh "${{ steps.version.outputs.version }}" ||
+            { echo "::error::CHANGELOG.md has no section for ${{ steps.version.outputs.version }}"; exit 1; }
 
   packages:
     name: ${{ matrix.dist }} (${{ matrix.arch }})
@@ -95,6 +103,9 @@ jobs:
     permissions:
       contents: write
     steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0    # The tags, for the list of changes
       - uses: actions/download-artifact@v4
         with:
           path: dist
@@ -108,7 +119,14 @@ jobs:
         run: |
           prerelease=
           case "$VERSION" in *-*) prerelease=--prerelease ;; esac
+          # The description: the section of CHANGELOG.md for this version
+          # (optional for a pre-release), followed by the list of the pull
+          # requests since the previous v* tag
+          sh packaging/release-notes.sh "$VERSION" > notes.md || : > notes.md
+          prev=$(git describe --tags --abbrev=0 --match 'v*' \
+                 "$GITHUB_REF_NAME^" 2>/dev/null || true)
           gh release create "$GITHUB_REF_NAME" dist/* \
             --repo "$GITHUB_REPOSITORY" \
             --title "mcabber-ng $VERSION" \
-            --generate-notes $prerelease
+            --notes-file notes.md \
+            --generate-notes ${prev:+--notes-start-tag "$prev"} $prerelease

@@ -26,6 +26,10 @@ safe pasting and a modern, themable interface.
   of mcabber.
 - **Room members panel** — next to the chat window, or over it.
 - **XMPP console** — watch the XML stream and send raw stanzas.
+- **Rooms and reconnections** — the room history is not received again
+  when you rejoin, lost connections (and sleep) are recovered by
+  themselves, rooms are joined again; a panel shows and edits the
+  bookmarks.
 - **External editor** — <kbd>Alt</kbd>+<kbd>e</kbd> edits the message in
   `$EDITOR`; inside tmux the editor opens in a pane next to mcabber-ng.
 - **Link hints** — <kbd>Alt</kbd>+<kbd>o</kbd> labels the links of the chat
@@ -229,6 +233,7 @@ All the mcabber commands are available (`/help` lists them). New ones:
 | `/console [show\|hide\|toggle\|clear]` | XMPP console; text typed while it is displayed is sent as raw XML |
 | `/bind KEY = COMMAND` | Bind a key, by name |
 | `/omemo [info\|on\|off\|trust…]` | OMEMO encryption: devices, fingerprints, trust |
+| `/bookmarks` | Panel of the room bookmarks: join, auto-join, edit, delete |
 | `/editor` | Edit the message in `$EDITOR` (<kbd>Alt</kbd>+<kbd>e</kbd>); in tmux, in a pane next to mcabber-ng |
 | `/url [command]` | Label the links of the chat window (<kbd>Alt</kbd>+<kbd>o</kbd>) and open the chosen one |
 

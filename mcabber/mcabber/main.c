@@ -46,6 +46,7 @@
 #include "compl.h"
 #include "mlua.h"
 #include "editor.h"
+#include "xmpp_muc.h"
 #ifdef HAVE_OMEMO
 # include "omemo.h"
 #endif
@@ -650,6 +651,7 @@ int main(int argc, char **argv)
   otr_terminate();
 #endif
   xmpp_disconnect();
+  muc_save_state();
 #ifdef HAVE_OMEMO
   omemo_deinit();
 #endif

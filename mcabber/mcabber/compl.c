@@ -134,6 +134,7 @@ void compl_init_system(void)
   register_builtin_cat(COMPL_MODULE, NULL);
   register_builtin_cat(COMPL_CARBONS, NULL);
   register_builtin_cat(COMPL_OMEMO, NULL);
+  register_builtin_cat(COMPL_BOOKMARKS, NULL);
 }
 
 #ifdef MODULES_ENABLE

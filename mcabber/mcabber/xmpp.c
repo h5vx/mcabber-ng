@@ -44,14 +44,16 @@
 # include "omemo.h"
 #endif
 
-#define RECONNECTION_TIMEOUT    60L
-
 #ifndef LOUDMOUTH_USES_SHA256
 #define FINGERPRINT_LENGTH      16  // old loudmouth still uses MD5 :(
 #endif
 
 LmConnection* lconnection = NULL;
-static guint AutoConnection;
+
+// Reconnection: the user wants to be connected (until /disconnect)
+static gboolean want_online;
+static guint reconnect_source, reconnect_attempts;
+static guint ping_timeout_source;
 
 inline void update_last_use(void);
 inline gboolean xmpp_reconnect(gpointer data);
@@ -820,24 +822,146 @@ static void connection_auth_cb(LmConnection *connection, gboolean success,
 
     xmpp_setprevstatus();
 
-    AutoConnection = TRUE;
+    // Join again the rooms we were in
+    muc_rejoin();
+    reconnect_attempts = 0;
   } else
     scr_LogPrint(LPRINT_LOGNORM, "Authentication failed");
 }
 
 gboolean xmpp_reconnect(gpointer data)
 {
+  reconnect_source = 0;
   if (!lconnection)
     xmpp_connect();
   return FALSE;
 }
 
+//  schedule_reconnect()
+// Try to connect again, sooner after the first failures (5 s, 10 s...)
+// than after the next ones (5 min).
+static void schedule_reconnect(void)
+{
+  static const guint delays[] = { 5, 10, 30, 60, 120, 300 };
+  const char *opt = settings_opt_get("autoreconnect");
+  guint delay;
+
+  if (!want_online || reconnect_source || (opt && !atoi(opt)))
+    return;
+  delay = delays[MIN(reconnect_attempts, G_N_ELEMENTS(delays) - 1)];
+  delay += g_random_int_range(0, delay / 4 + 1);
+  reconnect_attempts++;
+  scr_LogPrint(LPRINT_LOGNORM, "Reconnecting in %u seconds...", delay);
+  reconnect_source = g_timeout_add_seconds(delay, xmpp_reconnect, NULL);
+}
+
 static void _try_to_reconnect(void)
 {
   xmpp_disconnect();
-  if (AutoConnection)
-    g_timeout_add_seconds(RECONNECTION_TIMEOUT + (random() % 90L),
-                          xmpp_reconnect, NULL);
+  schedule_reconnect();
+}
+
+//  xmpp_go_offline()
+// Disconnect, and don't reconnect automatically (/disconnect).
+void xmpp_go_offline(void)
+{
+  want_online = FALSE;
+  if (reconnect_source)
+    g_source_remove(reconnect_source);
+  reconnect_source = 0;
+  xmpp_disconnect();
+}
+
+/* -- Connection check (after a sleep) ------------------------------------ */
+
+static gboolean ping_timeout_cb(gpointer data)
+{
+  ping_timeout_source = 0;
+  scr_LogPrint(LPRINT_LOGNORM, "No answer from the server: the connection "
+               "is lost.");
+  reconnect_attempts = 0;
+  _try_to_reconnect();
+  return FALSE;
+}
+
+static LmHandlerResult ping_reply_cb(LmMessageHandler *h, LmConnection *c,
+                                     LmMessage *m, gpointer data)
+{
+  if (ping_timeout_source) {
+    g_source_remove(ping_timeout_source);
+    ping_timeout_source = 0;
+  }
+  return LM_HANDLER_RESULT_REMOVE_MESSAGE;
+}
+
+//  xmpp_check_connection()
+// Make sure the connection is still alive (it may be dead after the
+// computer has been suspended): ping the server, or reconnect now.
+void xmpp_check_connection(void)
+{
+  if (lconnection && lm_connection_is_authenticated(lconnection)) {
+    LmMessage *iq;
+    LmMessageHandler *handler;
+    gchar *server;
+
+    if (ping_timeout_source)
+      return;
+    server = jidtodisp(lm_connection_get_jid(lconnection));
+    iq = lm_message_new_with_sub_type(strchr(server, JID_DOMAIN_SEPARATOR) ?
+                                      strchr(server, JID_DOMAIN_SEPARATOR) + 1
+                                      : server,
+                                      LM_MESSAGE_TYPE_IQ,
+                                      LM_MESSAGE_SUB_TYPE_GET);
+    lm_message_node_set_attribute(lm_message_node_add_child(iq->node, "ping",
+                                                            NULL),
+                                  "xmlns", NS_PING);
+    handler = lm_message_handler_new(ping_reply_cb, NULL, NULL);
+    if (lm_connection_send_with_reply(lconnection, iq, handler, NULL))
+      ping_timeout_source = g_timeout_add_seconds(15, ping_timeout_cb, NULL);
+    else
+      ping_timeout_cb(NULL);
+    lm_message_handler_unref(handler);
+    lm_message_unref(iq);
+    g_free(server);
+  } else if (want_online) {
+    // Waiting for a reconnection: do it now
+    if (reconnect_source)
+      g_source_remove(reconnect_source);
+    reconnect_source = 0;
+    reconnect_attempts = 0;
+    if (!lconnection)
+      xmpp_connect();
+  }
+}
+
+static gint64 boottime(void)
+{
+#ifdef CLOCK_BOOTTIME
+  struct timespec ts;
+  if (!clock_gettime(CLOCK_BOOTTIME, &ts))
+    return (gint64)ts.tv_sec * G_USEC_PER_SEC + ts.tv_nsec / 1000;
+#endif
+  return g_get_real_time();
+}
+
+//  wake_check()
+// The monotonic clock stops while the computer sleeps, the boot time clock
+// doesn't: a difference means that we have been suspended.
+static gboolean wake_check(gpointer data)
+{
+  static gint64 last_mono, last_boot;
+  gint64 mono = g_get_monotonic_time(), boot = boottime();
+
+  if (last_mono &&
+      (boot - last_boot) - (mono - last_mono) > 10 * G_USEC_PER_SEC) {
+    scr_LogPrint(LPRINT_LOGNORM, "Resumed after %lld seconds of sleep.",
+                 (long long)(((boot - last_boot) - (mono - last_mono)) /
+                             G_USEC_PER_SEC));
+    xmpp_check_connection();
+  }
+  last_mono = mono;
+  last_boot = boot;
+  return TRUE;
 }
 
 static void connection_open_cb(LmConnection *connection, gboolean success,
@@ -905,6 +1029,7 @@ static void connection_close_cb(LmConnection *connection,
   rosternotes = NULL;
   // Reset carbons
   carbons_reset();
+  muc_disconnected();
 #ifdef HAVE_OMEMO
   omemo_disconnected();
 #endif
@@ -967,7 +1092,7 @@ static void gotmessage(LmMessageSubType type, const char *from,
                        const char *body, const char *enc,
                        const char *subject, time_t timestamp,
                        LmMessageNode *node_signed, gboolean carbon,
-                       gboolean omemo)
+                       gboolean omemo, const char *stanza_id)
 {
   char *bjid;
   const char *rname;
@@ -1022,6 +1147,13 @@ static void gotmessage(LmMessageSubType type, const char *from,
     goto gotmessage_return;
   }
 
+  // Room history: drop the messages we have already received
+  if (type == LM_MESSAGE_SUB_TYPE_GROUPCHAT && body && !subject &&
+      roster_getnickname(bjid) &&
+      !muc_message_check(bjid, rname ? rname : "", body, stanza_id,
+                         timestamp))
+    goto gotmessage_return;
+
   if (subject && LM_MESSAGE_SUB_TYPE_GROUPCHAT == type) {
     // Room topic
     GSList *roombuddy;
@@ -1030,6 +1162,11 @@ static void gotmessage(LmMessageSubType type, const char *from,
     roombuddy = roster_find(bjid, jidsearch, 0);
     if (roombuddy)
       buddy_settopic(roombuddy->data, subject);
+    // When we join a room, it sends its topic again
+    if (!muc_topic_check(bjid, subject)) {
+      scr_update_chat_status(TRUE);
+      goto gotmessage_return;
+    }
     // Display inside the room window
     if (!rname) {
       // No specific resource (this is certainly history)
@@ -1050,6 +1187,9 @@ static void gotmessage(LmMessageSubType type, const char *from,
     g_free(mbuf);
     // The topic is displayed in the chat status line, so refresh now.
     scr_update_chat_status(TRUE);
+    // Already displayed: no "message" if there is no text
+    if (!body)
+      goto gotmessage_return;
   }
 
   // We don't call the message_in hook if 'block_unsubscribed' is true and
@@ -1304,8 +1444,19 @@ static LmHandlerResult handle_messages(LmMessageHandler *handler,
 
   // Only process messages that have a body or a subject
   if (body || subject) {
+    const char *stanza_id = NULL;
+    if (mstype == LM_MESSAGE_SUB_TYPE_GROUPCHAT) {
+      // The ID given by the room (XEP-0359)
+      LmMessageNode *n;
+      for (n = message_node->children; n; n = n->next)
+        if (!g_strcmp0(n->name, "stanza-id") &&
+            !g_strcmp0(lm_message_node_get_attribute(n, "xmlns"),
+                       NS_STANZA_ID) &&
+            jid_equal(lm_message_node_get_attribute(n, "by"), bjid))
+          stanza_id = lm_message_node_get_attribute(n, "id");
+    }
     gotmessage(mstype, from, body, enc, subject, timestamp,
-               ns_signed, carbons, omemo_ok);
+               ns_signed, carbons, omemo_ok, stanza_id);
   }
 
   // Handle XEP 184
@@ -1531,6 +1682,12 @@ static LmHandlerResult handle_presence(LmMessageHandler *handler,
         if (room_elt && !buddy_getinsideroom(room_elt->data))
           buddy_setnickname(room_elt->data, NULL);
       }
+    }
+    // A room we couldn't join: don't join it again after a reconnection
+    {
+      GSList *room_elt = roster_find(bjid, jidsearch, ROSTER_TYPE_ROOM);
+      if (room_elt && !buddy_getinsideroom(room_elt->data))
+        muc_forget_room(bjid);
     }
 
     g_free(bjid);
@@ -1910,8 +2067,16 @@ gint xmpp_connect(void)
   unsigned int ping = 40;
   LmMessageHandler *handler;
   GError *error = NULL;
+  static guint wake_source;
 
   xmpp_disconnect();
+  want_online = TRUE;
+  if (reconnect_source) {
+    g_source_remove(reconnect_source);
+    reconnect_source = 0;
+  }
+  if (!wake_source)
+    wake_source = g_timeout_add_seconds(5, wake_check, NULL);
 
   servername  = settings_opt_get("server");
   userjid     = settings_opt_get("jid");
@@ -2103,6 +2268,10 @@ void xmpp_insert_entity_capabilities(LmMessageNode *x, enum imstatus status)
 
 void xmpp_disconnect(void)
 {
+  if (ping_timeout_source) {
+    g_source_remove(ping_timeout_source);
+    ping_timeout_source = 0;
+  }
   if (!lconnection)
     return;
   if (lm_connection_is_authenticated(lconnection)) {
@@ -2356,6 +2525,55 @@ int xmpp_get_bookmark_autojoin(const char *bjid)
     }
   }
   return 0;
+}
+
+//  set_child_value(parent, name, value)
+// Set the text of the child element name, or remove it if value is empty.
+static void set_child_value(LmMessageNode *parent, const char *name,
+                            const char *value)
+{
+  LmMessageNode *c = lm_message_node_get_child(parent, name);
+  if (c && value && *value)
+    lm_message_node_set_value(c, value);
+  else if (c)
+    lm_message_node_hide(c);
+  else if (value && *value)
+    lm_message_node_add_child(parent, name, value);
+}
+
+//  xmpp_bookmark_set(roomjid, name, nick, passwd, autojoin)
+// Create or update a bookmark.  The other settings of an existing bookmark
+// (group, print_status...) are kept; an empty nick or password is removed.
+gboolean xmpp_bookmark_set(const char *roomjid, const char *name,
+                           const char *nick, const char *passwd,
+                           gboolean autojoin)
+{
+  LmMessageNode *x, *found = NULL;
+
+  if (!bookmarks) {
+    scr_LogPrint(LPRINT_NORMAL, "The bookmarks are not available (are you "
+                 "connected?).");
+    return FALSE;
+  }
+  for (x = bookmarks->children; x && !found; x = x->next)
+    if (x->name && !strcmp(x->name, "conference") &&
+        jid_equal(lm_message_node_get_attribute(x, "jid"), roomjid))
+      found = x;
+  if (!found) {
+    found = lm_message_node_add_child(bookmarks, "conference", NULL);
+    lm_message_node_set_attribute(found, "jid", roomjid);
+  }
+  lm_message_node_set_attributes(found,
+                                 "name", (name && *name) ? name : roomjid,
+                                 "autojoin", autojoin ? "1" : "0", NULL);
+  set_child_value(found, "nick", nick);
+  set_child_value(found, "password", passwd);
+
+  if (xmpp_is_online()) {
+    send_storage(bookmarks);
+    scr_LogPrint(LPRINT_LOGNORM, "Bookmarks updated.");
+  }
+  return TRUE;
 }
 
 //  xmpp_get_all_storage_bookmarks()
