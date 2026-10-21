@@ -1,7 +1,7 @@
 MCABBER-NG(1)
 =============
 Mikael BERTHE <mcabber@lilotux.net>
-v1.0.0, October 2026
+v1.1.0, October 2026
 
 NAME
 ----
@@ -319,13 +319,14 @@ COMMANDS RELATED TO MCABBER
         'muc' (jid|.|*) [on|preset|off|-];;  Sets a MUC nick coloring mode.  If a jid (. means currently selected jid) is provided, the mode will apply to this specific MUC.  If * is used, it will be applied to all MUCs, except the ones set by their jid. Mode 'on' colors all nicks, 'preset' only the ones manually set by /color mucnick command and 'off' colors none.  If not specified, defaults to 'on'.  Mode '-' removes the mode from given JID, which means the global one will apply.  You can not remove the global mode. Default global coloring mode is 'off'.
 
 /connect::
-        Establish connection to the Jabber server.
+        Establish connection to the Jabber server. +
+        When the connection is lost (or cannot be established), mcabber-ng connects again after 5 seconds, then 10 s, 30 s... up to 5 minutes between the attempts, unless the 'autoreconnect' option is 0.  After the computer has been suspended, the server is pinged and the connection is opened again if it doesn't answer.  The rooms you were in are joined again.
 
 /del::
         Delete the current buddy from our roster, unsubscribe from its presence notification and unsubscribe it from ours.
 
 /disconnect::
-        Terminate the connection to the Jabber server. +
+        Terminate the connection to the Jabber server (mcabber-ng doesn't reconnect until /connect). +
         Note: the roster is only available when the connection to the server is active, so the buddylist is empty when disconnected.
 
 /echo message::
@@ -574,7 +575,8 @@ COMMANDS RELATED TO MCABBER
         Without arguments prints a list of all set options with their values
 
 /source pattern::
-        Run the Lua files that match the glob pattern (sorted in alphabetical order).
+        Run the Lua files that match the glob pattern (sorted in alphabetical order). +
+        A file can be run again after it has been edited (e.g. "/source ~/.config/mcabber-ng/init.lua"): the event handlers and timers created by its previous run are removed first, and the Lua modules are loaded again by require().  The options, key bindings and styles it no longer sets keep their values.
 
 /status [online|avail|free|dnd|notavail|away [-|statusmessage]]::
 /status message -|statusmessage::
@@ -597,6 +599,10 @@ COMMANDS RELATED TO MCABBER
 
 /console [show|hide|toggle|clear]::
         Display the XMPP console (see USER INTERFACE).  'clear' empties it.
+
+/bookmarks [set|del room [name=... nick=... password=... autojoin=on|off]]::
+        Without arguments, display the bookmarks of rooms in a panel: Up/Down (or j/k) select a bookmark, Enter joins the room, 'a' toggles the auto-join, 'e' puts a "/bookmarks set" command for the bookmark in the input line, 'n' one for a new bookmark, 'd' (twice) deletes the bookmark, Escape closes the panel. +
+        'set' creates or changes the bookmark of a room; only the given fields change (an empty value removes the nickname or the password).  'del' deletes it.  Values with spaces are quoted: name='My room'.
 
 /editor [cancel]::
         Edit the input line (the message being written) in an external editor: the 'editor' option, or $VISUAL, or $EDITOR, or vi.  When the editor is closed, the text replaces the input line, without its final line breaks; it can have several lines.  If the editor fails (e.g. ":cq" in Vim), the input line is not changed. +
@@ -902,7 +908,8 @@ timestamp, readmark, status (status lines), log, roster, rostersel
 roster_group, roster_unread, status_online, status_free, status_away,
 status_notavail, status_dnd, status_invisible, status_offline, badge,
 nick_self, input, input_prompt, link_hint.  The "background", "bgstatus" and
-"bgrostersel" entries are background colors.  Any other name can be
+"bgrostersel" entries are background colors; these names can also be used
+as colors in the styles ("bg=bgstatus"), so that the styles follow them.  Any other name can be
 defined and used in formats ({#name}).  The old color_* options still
 work for the first ones.
 
@@ -934,6 +941,7 @@ The following files can be used by `mcabber(1)`:
     $HOME/.config/mcabber-ng/lua/       Lua modules directory (for require)
     $HOME/.config/mcabber-ng/histo/     Default directory for storing chat history files, if enabled
     $HOME/.config/mcabber-ng/omemo/     OMEMO keys, sessions and trust (one directory per account)
+    $HOME/.config/mcabber-ng/rooms.ini  What has been seen of each room (last messages, topic), to avoid receiving the room history again
     /usr/share/mcabber-ng/help/         Default directory for online help files
     /usr/share/mcabber-ng/init.lua.example  Sample configuration file
     /usr/lib/mcabber-ng/                Default directory for modules

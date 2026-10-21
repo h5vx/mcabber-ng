@@ -128,6 +128,9 @@ mc.set {
   -- can use the pinginterval.  Setting this option to 0 disables the ping.
   -- Default value is 40 seconds.
   -- pinginterval = 40,
+  --
+  -- Reconnection after a connection loss (5 s, 10 s, 30 s... up to 5 min)
+  -- autoreconnect = 1,
 
   -- Language
   -- Help files have been translated into a few languages.
@@ -621,6 +624,8 @@ mc.set {
   -- editor_tmux = "split",
   -- editor_tmux_args = "-h -l 40%",
 }
+-- The bookmarks panel ("/bookmarks") has no default key:
+-- mc.bind("Alt+k", "bookmarks")
 
 mc.set {
   -- OMEMO end-to-end encryption (one-to-one chats only)

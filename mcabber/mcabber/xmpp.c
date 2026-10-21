@@ -2527,6 +2527,55 @@ int xmpp_get_bookmark_autojoin(const char *bjid)
   return 0;
 }
 
+//  set_child_value(parent, name, value)
+// Set the text of the child element name, or remove it if value is empty.
+static void set_child_value(LmMessageNode *parent, const char *name,
+                            const char *value)
+{
+  LmMessageNode *c = lm_message_node_get_child(parent, name);
+  if (c && value && *value)
+    lm_message_node_set_value(c, value);
+  else if (c)
+    lm_message_node_hide(c);
+  else if (value && *value)
+    lm_message_node_add_child(parent, name, value);
+}
+
+//  xmpp_bookmark_set(roomjid, name, nick, passwd, autojoin)
+// Create or update a bookmark.  The other settings of an existing bookmark
+// (group, print_status...) are kept; an empty nick or password is removed.
+gboolean xmpp_bookmark_set(const char *roomjid, const char *name,
+                           const char *nick, const char *passwd,
+                           gboolean autojoin)
+{
+  LmMessageNode *x, *found = NULL;
+
+  if (!bookmarks) {
+    scr_LogPrint(LPRINT_NORMAL, "The bookmarks are not available (are you "
+                 "connected?).");
+    return FALSE;
+  }
+  for (x = bookmarks->children; x && !found; x = x->next)
+    if (x->name && !strcmp(x->name, "conference") &&
+        jid_equal(lm_message_node_get_attribute(x, "jid"), roomjid))
+      found = x;
+  if (!found) {
+    found = lm_message_node_add_child(bookmarks, "conference", NULL);
+    lm_message_node_set_attribute(found, "jid", roomjid);
+  }
+  lm_message_node_set_attributes(found,
+                                 "name", (name && *name) ? name : roomjid,
+                                 "autojoin", autojoin ? "1" : "0", NULL);
+  set_child_value(found, "nick", nick);
+  set_child_value(found, "password", passwd);
+
+  if (xmpp_is_online()) {
+    send_storage(bookmarks);
+    scr_LogPrint(LPRINT_LOGNORM, "Bookmarks updated.");
+  }
+  return TRUE;
+}
+
 //  xmpp_get_all_storage_bookmarks()
 // Return a GSList with all storage bookmarks.
 // The caller should g_free the list (not the MUC jids).

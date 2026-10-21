@@ -1,0 +1,16 @@
+
+ /BOOKMARKS [set|del room [name=... nick=... password=... autojoin=on|off]]
+
+Without arguments, display the room bookmarks in a panel:
+ Up/Down (j/k)  select a bookmark
+ Enter          join the room
+ a              toggle the auto-join
+ e              edit the bookmark ("/bookmarks set" in the input line)
+ n              new bookmark
+ d (twice)      delete the bookmark
+ Escape         close the panel
+
+/bookmarks set room [name=...] [nick=...] [password=...] [autojoin=on|off]
+ Create or change the bookmark of a room; only the given fields change.  Quote values with spaces: name='My room'
+/bookmarks del room
+ Delete the bookmark of a room
