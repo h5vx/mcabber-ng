@@ -148,8 +148,27 @@ int mlua_pcall(lua_State *L, int nargs, int nresults, const char *ctx)
   return ret;
 }
 
+//  load_mark(begin, path)
+// Tell the prelude that a file is going to be loaded (or has been loaded):
+// what its previous load created is removed (see mc._load_begin).
+static void load_mark(gboolean begin, const char *path)
+{
+  gchar *canon = g_canonicalize_filename(path, NULL);
+  lua_getfield(L, LUA_GLOBALSINDEX, "mc");
+  lua_getfield(L, -1, begin ? "_load_begin" : "_load_end");
+  lua_remove(L, -2);
+  lua_pushstring(L, canon);
+  if (lua_pcall(L, 1, 0, 0)) {
+    mlua_report_error(path, lua_tostring(L, -1));
+    lua_pop(L, 1);
+  }
+  g_free(canon);
+}
+
 int mlua_dofile(const char *path)
 {
+  int ret;
+
   if (!L)
     return -1;
   if (luaL_loadfile(L, path)) {
@@ -157,7 +176,10 @@ int mlua_dofile(const char *path)
     lua_pop(L, 1);
     return -1;
   }
-  return mlua_pcall(L, 0, 0, path);
+  load_mark(TRUE, path);
+  ret = mlua_pcall(L, 0, 0, path);
+  load_mark(FALSE, path);
+  return ret;
 }
 
 int mlua_dostring(const char *code, const char *chunkname)
@@ -317,8 +339,11 @@ int mlua_load_config(const char *filename)
 
   mlua_startup = TRUE;
   ret = luaL_loadfile(L, path);
-  if (!ret)
+  if (!ret) {
+    load_mark(TRUE, path);
     ret = pcall_traceback(L, 0, 0);
+    load_mark(FALSE, path);
+  }
   mlua_startup = FALSE;
 
   if (ret) {

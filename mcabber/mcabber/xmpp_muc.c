@@ -143,13 +143,15 @@ gboolean muc_message_check(const char *room, const char *nick,
 
 //  muc_topic_check(room, topic)
 // The topic of the room has been received.  Returns FALSE if it needn't be
-// displayed: the room sends it when we join, and we know it already.
-// It also ends the history.
+// displayed: the room sends it again when we join or change our nickname,
+// and we know it already.  It also ends the history.
 gboolean muc_topic_check(const char *room, const char *topic)
 {
   gchar *key = room_key(room);
-  gboolean joined = joining && g_hash_table_remove(joining, key);
   gboolean same;
+
+  if (joining)
+    g_hash_table_remove(joining, key);
 
   state_open();
   same = !g_strcmp0(mucstate_topic(room), topic ? topic : "");
@@ -158,7 +160,7 @@ gboolean muc_topic_check(const char *room, const char *topic)
     schedule_save();
   }
   g_free(key);
-  return !(joined && same);
+  return !same;
 }
 
 //  muc_backlog(room)
@@ -175,6 +177,21 @@ gboolean muc_backlog(const char *room)
   r = GPOINTER_TO_INT(g_hash_table_lookup(joining, key)) == 2;
   g_free(key);
   return r;
+}
+
+//  muc_joined(room)
+// TRUE if we are in the room, or joining it, on this connection.
+gboolean muc_joined(const char *room)
+{
+  gchar *key;
+  room_join_t *j;
+
+  if (!rooms_joined)
+    return FALSE;
+  key = room_key(room);
+  j = g_hash_table_lookup(rooms_joined, key);
+  g_free(key);
+  return j && j->sent;
 }
 
 //  muc_rejoin()
@@ -222,7 +239,7 @@ void muc_disconnected(void)
   muc_save_state();
 }
 
-static void muc_forget_room(const char *room)
+void muc_forget_room(const char *room)
 {
   gchar *key;
   if (!rooms_joined)
@@ -328,21 +345,15 @@ void xmpp_room_join(const char *room, const char *nickname, const char *passwd)
 
   muc_tables_init();
   {
-    // The room may be joined again after a reconnection and then from the
-    // bookmarks: don't send the same request twice.
+    // Remember the room, to join it again after a reconnection
     gchar *key = room_key(room);
-    room_join_t *j = g_hash_table_lookup(rooms_joined, key);
-    if (j && j->sent && !g_strcmp0(j->nick, nickname) &&
-        g_get_monotonic_time() - j->sent < 30 * G_USEC_PER_SEC) {
-      g_free(key);
-      g_free(roomid);
-      return;
-    }
+    room_join_t *old = g_hash_table_lookup(rooms_joined, key), *j;
     j = g_new0(room_join_t, 1);
     j->nick = g_strdup(nickname);
-    j->passwd = g_strdup(passwd);
+    // A nickname change has no password: keep the one used to join
+    j->passwd = g_strdup(passwd ? passwd : old ? old->passwd : NULL);
     j->sent = g_get_monotonic_time();
-    g_hash_table_replace(rooms_joined, key, j);
+    g_hash_table_replace(rooms_joined, key, j);   // Frees old
   }
 
   room_elt = roster_find(room, jidsearch, ROSTER_TYPE_USER|ROSTER_TYPE_ROOM);
@@ -373,7 +384,8 @@ void xmpp_room_join(const char *room, const char *nickname, const char *passwd)
   {
     time_t last = mucstate_last(room);
     gchar *key = room_key(room);
-    if (last) {
+    // Not for a nickname change
+    if (last && !buddy_getinsideroom(room_elt->data)) {
       char since[32];
       time_t t = last - HISTORY_MARGIN;
       strftime(since, sizeof since, "%Y-%m-%dT%H:%M:%SZ", gmtime(&t));

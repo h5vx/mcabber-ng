@@ -1683,6 +1683,12 @@ static LmHandlerResult handle_presence(LmMessageHandler *handler,
           buddy_setnickname(room_elt->data, NULL);
       }
     }
+    // A room we couldn't join: don't join it again after a reconnection
+    {
+      GSList *room_elt = roster_find(bjid, jidsearch, ROSTER_TYPE_ROOM);
+      if (room_elt && !buddy_getinsideroom(room_elt->data))
+        muc_forget_room(bjid);
+    }
 
     g_free(bjid);
     return LM_HANDLER_RESULT_ALLOW_MORE_HANDLERS;

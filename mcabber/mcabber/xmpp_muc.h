@@ -22,6 +22,8 @@ gboolean muc_message_check(const char *room, const char *nick,
                            time_t timestamp);
 gboolean muc_topic_check(const char *room, const char *topic);
 gboolean muc_backlog(const char *room);
+gboolean muc_joined(const char *room);
+void muc_forget_room(const char *room);
 void muc_rejoin(void);
 void muc_disconnected(void);
 void muc_save_state(void);

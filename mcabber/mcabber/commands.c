@@ -3395,7 +3395,7 @@ static void room_bookmark(gpointer bud, char *arg)
 {
   const char *roomid;
   const char *name = NULL, *nick = NULL, *passwd = NULL, *group = NULL;
-  char *tmpnick = NULL;
+  char *tmpnick = NULL, *tmppasswd = NULL;
   enum room_autowhois autowhois = 0;
   enum room_flagjoins flagjoins = 0;
   enum room_printstatus printstatus = 0;
@@ -3428,7 +3428,7 @@ static void room_bookmark(gpointer bud, char *arg)
         nick_set = 1;
         nick = tmpnick = to_utf8 (*pp);
       } else if (nick_set == 1) {
-        passwd = to_utf8(*pp);
+        passwd = tmppasswd = to_utf8(*pp);
       }
     }
     free_arg_lst(paramlst);
@@ -3446,6 +3446,9 @@ static void room_bookmark(gpointer bud, char *arg)
     if (!autojoin_set) {
       autojoin = xmpp_get_bookmark_autojoin(roomid);
     }
+    // Keep the password of the room
+    if (!passwd)
+      passwd = tmppasswd = g_strdup(xmpp_get_bookmark_password(roomid));
     printstatus = buddy_getprintstatus(bud);
     autowhois   = buddy_getautowhois(bud);
     flagjoins   = buddy_getflagjoins(bud);
@@ -3455,6 +3458,7 @@ static void room_bookmark(gpointer bud, char *arg)
   xmpp_set_storage_bookmark(roomid, name, nick, passwd, autojoin,
                             printstatus, autowhois, flagjoins, group);
   g_free(tmpnick);
+  g_free(tmppasswd);
 }
 
 static void display_all_bookmarks(void)
