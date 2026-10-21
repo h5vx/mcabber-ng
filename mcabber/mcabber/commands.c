@@ -4397,7 +4397,7 @@ static void do_connect(char *arg)
 
 static void do_disconnect(char *arg)
 {
-  xmpp_disconnect();
+  xmpp_go_offline();
 }
 
 static void do_help(char *arg)

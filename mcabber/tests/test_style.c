@@ -5,6 +5,11 @@
 static void test_colors(void)
 {
   style_color_t c;
+  g_assert_true(style_parse_color("bgstatus", &c, NULL));
+  g_assert_cmpint(c.kind, ==, STYLE_COLOR_REF);
+  g_assert_cmpuint(c.value, ==, STYLE_REF_BGSTATUS);
+  g_assert_true(style_parse_color("Background", &c, NULL));
+  g_assert_cmpuint(c.value, ==, STYLE_REF_BACKGROUND);
   g_assert_true(style_parse_color("default", &c, NULL));
   g_assert_cmpint(c.kind, ==, STYLE_COLOR_DEFAULT);
   g_assert_true(style_parse_color("red", &c, NULL));

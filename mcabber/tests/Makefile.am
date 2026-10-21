@@ -1,6 +1,6 @@
 # Unit tests for the code in ../mcabber/libmcpure.a
 check_PROGRAMS = test_utf8 test_keys test_layout test_inputlayout test_paste test_fmt test_style test_xmlsplit \
-		 test_links
+		 test_links test_mucstate
 TESTS = $(check_PROGRAMS)
 
 # Globals normally provided by the full program
@@ -20,6 +20,7 @@ test_fmt_SOURCES = test_fmt.c
 test_style_SOURCES = test_style.c
 test_xmlsplit_SOURCES = test_xmlsplit.c
 test_links_SOURCES = test_links.c
+test_mucstate_SOURCES = test_mucstate.c
 
 if OMEMO
 check_PROGRAMS += test_omemo

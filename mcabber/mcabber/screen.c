@@ -320,6 +320,9 @@ static void detect_color_depth(void)
 // -2 if the color is not set.  Colors that the terminal doesn't have are
 // approximated (A_BOLD is added to attrs for bright colors on 8-color
 // terminals).
+// The backgrounds of the theme: background, bgstatus, bgrostersel
+static int theme_bgs[3] = { -1, -1, -1 };
+
 static int resolve_color(const style_color_t *c, int *attrs)
 {
   guint32 rgb;
@@ -329,6 +332,8 @@ static int resolve_color(const style_color_t *c, int *attrs)
         return -2;
     case STYLE_COLOR_DEFAULT:
         return -1;
+    case STYLE_COLOR_REF:
+        return c->value < G_N_ELEMENTS(theme_bgs) ? theme_bgs[c->value] : -1;
     case STYLE_COLOR_INDEX:
         if (c->value < 8 ||
             (color_depth <= 256 && c->value < (guint)color_depth))
@@ -779,6 +784,7 @@ static void parse_colors(void)
       bgs[i] = resolve_color(&c, NULL);
     else
       bgs[i] = legacy_color(v ? v : bg_defaults[i][1], NULL);
+    theme_bgs[i] = bgs[i];
   }
 
   init_pair(1, COLOR_BLACK, COLOR_WHITE);

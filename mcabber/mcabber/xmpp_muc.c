@@ -34,11 +34,204 @@
 #include "settings.h"
 #include "utils.h"
 #include "histolog.h"
+#include "mucstate.h"
 
 extern enum imstatus mystatus;
 extern gchar *mystatusmsg;
 
 static GSList *invitations = NULL;
+
+/* -- Room history and reconnections -------------------------------------- */
+
+// When we join a room again, we ask for the history since the last message
+// we have seen, a bit earlier in case the clocks differ: the messages that
+// we have already seen are dropped.
+#define HISTORY_MARGIN 300
+
+typedef struct {
+  gchar *nick, *passwd;
+  gint64 sent;          // When the join request has been sent (monotonic)
+} room_join_t;
+
+static GHashTable *rooms_joined;  // Rooms to join again after a reconnection
+static GHashTable *joining;       // Rooms sending their history: first join?
+static guint save_source;
+
+static void room_join_free(gpointer p)
+{
+  room_join_t *j = p;
+  g_free(j->nick);
+  g_free(j->passwd);
+  g_free(j);
+}
+
+static void muc_tables_init(void)
+{
+  if (rooms_joined)
+    return;
+  rooms_joined = g_hash_table_new_full(g_str_hash, g_str_equal, g_free,
+                                       room_join_free);
+  joining = g_hash_table_new_full(g_str_hash, g_str_equal, g_free, NULL);
+}
+
+static gchar *room_key(const char *room)
+{
+  return g_utf8_strdown(room, -1);
+}
+
+static void state_open(void)
+{
+  static gboolean opened;
+  if (!opened) {
+    gchar *path = g_build_filename(settings_get_mcabber_config_dir(),
+                                   "rooms.ini", NULL);
+    mucstate_open(path);
+    g_free(path);
+    opened = TRUE;
+  }
+}
+
+static gboolean save_cb(gpointer data)
+{
+  save_source = 0;
+  mucstate_save();
+  return FALSE;
+}
+
+static void schedule_save(void)
+{
+  if (!save_source)
+    save_source = g_timeout_add_seconds(10, save_cb, NULL);
+}
+
+void muc_save_state(void)
+{
+  if (save_source) {
+    g_source_remove(save_source);
+    save_source = 0;
+  }
+  mucstate_save();
+}
+
+//  muc_message_check(room, nick, text, stanza_id, timestamp)
+// Record a message from a room.  Returns FALSE if it is a message of the
+// history that we have already received.
+gboolean muc_message_check(const char *room, const char *nick,
+                           const char *text, const char *stanza_id,
+                           time_t timestamp)
+{
+  gchar *id_key = NULL, *hash_key;
+  gboolean seen = FALSE;
+
+  state_open();
+  if (stanza_id && *stanza_id)
+    id_key = mucstate_key(stanza_id, NULL, NULL);
+  hash_key = mucstate_key(NULL, nick, text);
+  if (timestamp)
+    seen = mucstate_seen(room, id_key ? id_key : hash_key);
+  if (!seen) {
+    time_t when = timestamp ? timestamp : time(NULL);
+    if (id_key)
+      mucstate_add(room, id_key, when);
+    mucstate_add(room, hash_key, when);
+    schedule_save();
+  }
+  g_free(id_key);
+  g_free(hash_key);
+  return !seen;
+}
+
+//  muc_topic_check(room, topic)
+// The topic of the room has been received.  Returns FALSE if it needn't be
+// displayed: the room sends it when we join, and we know it already.
+// It also ends the history.
+gboolean muc_topic_check(const char *room, const char *topic)
+{
+  gchar *key = room_key(room);
+  gboolean joined = joining && g_hash_table_remove(joining, key);
+  gboolean same;
+
+  state_open();
+  same = !g_strcmp0(mucstate_topic(room), topic ? topic : "");
+  if (!same) {
+    mucstate_set_topic(room, topic ? topic : "");
+    schedule_save();
+  }
+  g_free(key);
+  return !(joined && same);
+}
+
+//  muc_backlog(room)
+// TRUE while we receive the history of a room that we join for the first
+// time: these old messages are not marked as unread.
+gboolean muc_backlog(const char *room)
+{
+  gchar *key;
+  gboolean r;
+
+  if (!joining)
+    return FALSE;
+  key = room_key(room);
+  r = GPOINTER_TO_INT(g_hash_table_lookup(joining, key)) == 2;
+  g_free(key);
+  return r;
+}
+
+//  muc_rejoin()
+// Join again the rooms we were in before the connection was lost.
+void muc_rejoin(void)
+{
+  GHashTableIter it;
+  gpointer k, v;
+  GPtrArray *rooms;
+  guint i;
+
+  if (!rooms_joined)
+    return;
+  // xmpp_room_join() updates the table: copy it first
+  rooms = g_ptr_array_new_with_free_func((GDestroyNotify)g_strfreev);
+  g_hash_table_iter_init(&it, rooms_joined);
+  while (g_hash_table_iter_next(&it, &k, &v)) {
+    room_join_t *j = v;
+    gchar **r = g_new0(gchar *, 4);
+    r[0] = g_strdup(k);
+    r[1] = g_strdup(j->nick);
+    r[2] = g_strdup(j->passwd);   // May be NULL: the vector ends there
+    g_ptr_array_add(rooms, r);
+  }
+  for (i = 0; i < rooms->len; i++) {
+    gchar **r = g_ptr_array_index(rooms, i);
+    scr_LogPrint(LPRINT_LOGNORM, "Joining <%s> again", r[0]);
+    xmpp_room_join(r[0], r[1], r[2]);
+  }
+  g_ptr_array_free(rooms, TRUE);
+}
+
+void muc_disconnected(void)
+{
+  GHashTableIter it;
+  gpointer v;
+
+  if (!rooms_joined)
+    return;
+  g_hash_table_remove_all(joining);
+  // New join requests will be needed
+  g_hash_table_iter_init(&it, rooms_joined);
+  while (g_hash_table_iter_next(&it, NULL, &v))
+    ((room_join_t *)v)->sent = 0;
+  muc_save_state();
+}
+
+static void muc_forget_room(const char *room)
+{
+  gchar *key;
+  if (!rooms_joined)
+    return;
+  key = room_key(room);
+  g_hash_table_remove(rooms_joined, key);
+  g_hash_table_remove(joining, key);
+  g_free(key);
+}
 
 static void decline_invitation(event_muc_invitation_t *invitation, const char *reason)
 {
@@ -133,6 +326,25 @@ void xmpp_room_join(const char *room, const char *nickname, const char *passwd)
     return;
   }
 
+  muc_tables_init();
+  {
+    // The room may be joined again after a reconnection and then from the
+    // bookmarks: don't send the same request twice.
+    gchar *key = room_key(room);
+    room_join_t *j = g_hash_table_lookup(rooms_joined, key);
+    if (j && j->sent && !g_strcmp0(j->nick, nickname) &&
+        g_get_monotonic_time() - j->sent < 30 * G_USEC_PER_SEC) {
+      g_free(key);
+      g_free(roomid);
+      return;
+    }
+    j = g_new0(room_join_t, 1);
+    j->nick = g_strdup(nickname);
+    j->passwd = g_strdup(passwd);
+    j->sent = g_get_monotonic_time();
+    g_hash_table_replace(rooms_joined, key, j);
+  }
+
   room_elt = roster_find(room, jidsearch, ROSTER_TYPE_USER|ROSTER_TYPE_ROOM);
   // Add room if it doesn't already exist
   if (!room_elt) {
@@ -155,6 +367,25 @@ void xmpp_room_join(const char *room, const char *nickname, const char *passwd)
   lm_message_node_set_attribute(y, "xmlns", NS_MUC);
   if (passwd)
     lm_message_node_add_child(y, "password", passwd);
+
+  // History: only what we haven't seen (XEP-0045 7.2.15)
+  state_open();
+  {
+    time_t last = mucstate_last(room);
+    gchar *key = room_key(room);
+    if (last) {
+      char since[32];
+      time_t t = last - HISTORY_MARGIN;
+      strftime(since, sizeof since, "%Y-%m-%dT%H:%M:%SZ", gmtime(&t));
+      lm_message_node_set_attribute(
+          lm_message_node_add_child(y, "history", NULL), "since", since);
+    }
+    // 2: first join, the history is only context; 1: missed messages
+    if (!buddy_getinsideroom(room_elt->data))
+      g_hash_table_replace(joining, key, GINT_TO_POINTER(last ? 1 : 2));
+    else
+      g_free(key);
+  }
 
   lm_connection_send(lconnection, x, NULL);
   lm_message_unref(x);
@@ -627,6 +858,7 @@ void handle_muc_presence(const char *from, LmMessageNode *xmldata,
 
     // If this is a leave, check if it is ourself
     if (our_presence) {
+      muc_forget_room(roomjid);
       buddy_setinsideroom(room_elt->data, FALSE);
       buddy_setnickname(room_elt->data, NULL);
       buddy_del_all_resources(room_elt->data);

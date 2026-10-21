@@ -37,6 +37,8 @@ extern LmSSL* lssl;
 
 int  xmpp_connect(void);
 void xmpp_disconnect(void);
+void xmpp_go_offline(void);
+void xmpp_check_connection(void);
 gboolean xmpp_is_online(void);
 gboolean xmpp_send_raw(const char *xml);
 
