@@ -385,6 +385,10 @@ mc.set {
   -- the roster when somebody joins a room.  Set it to 2 if you want a flag
   -- for leaves too.
   -- muc_flag_joins = 0,
+  -- Set 'muc_flag_on_join' to 1 to flag a room in the roster when you join
+  -- it (the rooms are joined again at each connection).  Old messages of
+  -- the room history and topic changes are never flagged.
+  -- muc_flag_on_join = 0,
   -- Set 'muc_print_status' to see status changes in MUC rooms:
   -- 1: (none)       do not display joining/leaving members
   -- 2: (in_and_out) display joining/leaving members
@@ -506,10 +510,10 @@ mc.set {
 mc.set {
   -- Style
   -- Note: the 'log_win_height' and 'roster_width' values below can be set
-  -- in real time when mcabber is running.  Refresh the screen (Ctrl-l) to
-  -- use the new values.
+  -- in real time when mcabber-ng is running.
   --
-  -- Log window height (minimum 1, default 5)
+  -- Log window height (default 5; 0 hides it: the messages are in the
+  -- [status] buffer)
   -- log_win_height = 5,
   -- Buddylist window width (minimum 2, default 24)
   -- roster_width = 24,
@@ -624,8 +628,9 @@ mc.set {
   -- editor_tmux = "split",
   -- editor_tmux_args = "-h -l 40%",
 }
--- The bookmarks panel ("/bookmarks") has no default key:
+-- The [bookmarks] buffer (in the roster, or "/bookmarks") has no key:
 -- mc.bind("Alt+k", "bookmarks")
+-- mc.set { roster_bookmarks = 0 }   -- to hide it from the roster
 
 mc.set {
   -- OMEMO end-to-end encryption (one-to-one chats only)

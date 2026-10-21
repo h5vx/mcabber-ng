@@ -1,7 +1,7 @@
 MCABBER-NG(1)
 =============
 Mikael BERTHE <mcabber@lilotux.net>
-v1.1.0, October 2026
+v1.1.1, October 2026
 
 NAME
 ----
@@ -601,7 +601,7 @@ COMMANDS RELATED TO MCABBER
         Display the XMPP console (see USER INTERFACE).  'clear' empties it.
 
 /bookmarks [set|del room [name=... nick=... password=... autojoin=on|off]]::
-        Without arguments, display the bookmarks of rooms in a panel: Up/Down (or j/k) select a bookmark, Enter joins the room, 'a' toggles the auto-join, 'e' puts a "/bookmarks set" command for the bookmark in the input line, 'n' one for a new bookmark, 'd' (twice) deletes the bookmark, Escape closes the panel. +
+        Without arguments, select the [bookmarks] buffer (shown in the roster under [status], unless the 'roster_bookmarks' option is 0), which lists the bookmarks of rooms.  When the input line is empty: Up/Down (or j/k) select a bookmark, Enter joins the room, 'a' toggles the auto-join, 'e' puts a "/bookmarks set" command for the bookmark in the input line, 'n' one for a new bookmark, 'd' (twice) deletes the bookmark. +
         'set' creates or changes the bookmark of a room; only the given fields change (an empty value removes the nickname or the password).  'del' deletes it.  Values with spaces are quoted: name='My room'.
 
 /editor [cancel]::

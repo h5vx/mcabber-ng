@@ -4,10 +4,10 @@
 .\" Generator: DocBook XSL Stylesheets vsnapshot <http://docbook.sf.net/>
 .\"      Date: October 2026
 .\"    Manual: \ \&
-.\"    Source: \ \& 1.1.0
+.\"    Source: \ \& 1.1.1
 .\"  Language: English
 .\"
-.TH "MCABBER\-NG" "1" "October 2026" "\ \& 1\&.1\&.0" "\ \&"
+.TH "MCABBER\-NG" "1" "October 2026" "\ \& 1\&.1\&.1" "\ \&"
 .\" -----------------------------------------------------------------
 .\" * Define some portability stuff
 .\" -----------------------------------------------------------------
@@ -1602,7 +1602,9 @@ empties it\&.
 .PP
 /bookmarks [set|del room [name=\&... nick=\&... password=\&... autojoin=on|off]]
 .RS 4
-Without arguments, display the bookmarks of rooms in a panel: Up/Down (or j/k) select a bookmark, Enter joins the room,
+Without arguments, select the [bookmarks] buffer (shown in the roster under [status], unless the
+\fIroster_bookmarks\fR
+option is 0), which lists the bookmarks of rooms\&. When the input line is empty: Up/Down (or j/k) select a bookmark, Enter joins the room,
 \fIa\fR
 toggles the auto\-join,
 \fIe\fR
@@ -1610,7 +1612,7 @@ puts a "/bookmarks set" command for the bookmark in the input line,
 \fIn\fR
 one for a new bookmark,
 \fId\fR
-(twice) deletes the bookmark, Escape closes the panel\&.
+(twice) deletes the bookmark\&.
 
 \fIset\fR
 creates or changes the bookmark of a room; only the given fields change (an empty value removes the nickname or the password)\&.

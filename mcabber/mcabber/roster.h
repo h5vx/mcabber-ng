@@ -8,6 +8,7 @@
 #include <mcabber/config.h>
 
 #define SPECIAL_BUFFER_STATUS_ID  "[status]"
+#define SPECIAL_BUFFER_BOOKMARKS_ID  "[bookmarks]"
 
 // Default UI priorities
 #define ROSTER_UI_PRIO_MUC_MESSAGE        20
