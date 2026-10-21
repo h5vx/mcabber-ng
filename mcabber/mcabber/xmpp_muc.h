@@ -17,11 +17,11 @@ void got_invite(const char* from, const char *to, const char* reason,
 void got_muc_message(const char *from, LmMessageNode *x,
                      time_t timestamp);
 // Room history and reconnections
-gboolean muc_message_check(const char *room, const char *nick,
-                           const char *text, const char *stanza_id,
-                           time_t timestamp);
+enum { MUC_MSG_DROP, MUC_MSG_NEW, MUC_MSG_OLD };
+int muc_message_check(const char *room, const char *nick, const char *text,
+                      const char *stanza_id, time_t timestamp);
+gboolean muc_take_old(void);
 gboolean muc_topic_check(const char *room, const char *topic);
-gboolean muc_backlog(const char *room);
 gboolean muc_joined(const char *room);
 void muc_forget_room(const char *room);
 void muc_rejoin(void);

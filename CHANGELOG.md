@@ -3,6 +3,26 @@
 Each release has a section here: its text is the description of the
 GitHub release (see `packaging/release-notes.sh`).
 
+## 1.1.1
+
+- Rooms: the history sent by a room is displayed again; its messages
+  already seen before (and all of it when the room is joined for the first
+  time) are not marked as unread, only the ones received while you were
+  away.  Joining a room no longer flags it in the roster (option
+  `muc_flag_on_join`); joins and leaves are flagged only with
+  `muc_flag_joins`, topic changes never.
+- The layout options (`log_win_height`, `roster_width`, `ui_borders`…)
+  are applied as soon as they change, e.g. after `/source`.
+  `log_win_height = 0` hides the log window (its messages are in the
+  `[status]` buffer).
+- The bookmarks are a special buffer, `[bookmarks]`, in the roster under
+  `[status]` (option `roster_bookmarks`); its columns fit their contents
+  and the width of the window, and a name equal to the room address is
+  shown as a dash.
+- In vi mode, the commands put in the input line (bookmark edition) start
+  with `:`.
+- Release notes: the lines of each paragraph are joined.
+
 ## 1.1.0
 
 ### Rooms

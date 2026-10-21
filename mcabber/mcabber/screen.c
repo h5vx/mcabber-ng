@@ -164,6 +164,17 @@ static winbuf_t *consoleWindow;   // XMPP console
 static gboolean console_shown;
 static GList *console_buddy;      // Current buddy when it was displayed
 static void console_show(void);
+
+// The [bookmarks] buffer
+static struct {
+  gboolean active;        // The buffer is displayed
+  gboolean confirm_del;   // "d" has been pressed once
+  winbuf_t *win;
+  GSList *list;           // struct bookmark*, sorted
+  guint sel;
+} bmp;
+static void bmp_show(void);
+static void set_current_buddy(GList *newbuddy);
 static int maxY, maxX;
 static int prev_chatwidth;
 static winbuf_t *statusWindow;
@@ -1043,6 +1054,21 @@ static gchar *scr_vi_mode_guard(const gchar *key, const gchar *new_value)
   return g_strdup(new_value);
 }
 
+// The options of the layout: the windows are rebuilt when they change
+static gboolean layout_stalled;
+static const char *layout_options[] = {
+  "log_win_height", "log_win_on_top", "roster_width", "roster_win_on_right",
+  "input_position", "input_max_rows", "ui_borders", "muc_members_width",
+  "muc_members_left", "muc_members", NULL
+};
+
+static gchar *scr_layout_guard(const gchar *key, const gchar *new_value)
+{
+  if (g_strcmp0(settings_opt_get(key), new_value))
+    layout_stalled = TRUE;
+  return g_strdup(new_value);
+}
+
 static gchar *scr_color_guard(const gchar *key, const gchar *new_value)
 {
   if (g_strcmp0(settings_opt_get(key), new_value))
@@ -1130,6 +1156,11 @@ void scr_init_curses(void)
 
   // Set up vi_mode guard
   settings_set_guard("vi_mode", scr_vi_mode_guard);
+  {
+    int i;
+    for (i = 0; layout_options[i]; i++)
+      settings_set_guard(layout_options[i], scr_layout_guard);
+  }
   if (settings_opt_get_int("vi_mode") == 1)
     vi_mode = true;
 
@@ -2041,6 +2072,7 @@ static void scr_show_window(const char *winId, int special)
   }
 
   console_shown = FALSE;
+  bmp.active = FALSE;
   top_panel(win_entry->panel);
   // The splash window is wider than a room window: hide it
   // (top_panel() shows it again)
@@ -2080,7 +2112,11 @@ void scr_show_buddy_window(void)
   } else {
     bjid = CURRENT_JID;
     if (buddy_gettype(BUDDATA(current_buddy)) & ROSTER_TYPE_SPECIAL) {
-      scr_show_window(buddy_getname(BUDDATA(current_buddy)), TRUE);
+      if (!g_strcmp0(buddy_getname(BUDDATA(current_buddy)),
+                     SPECIAL_BUFFER_BOOKMARKS_ID))
+        bmp_show();
+      else
+        scr_show_window(buddy_getname(BUDDATA(current_buddy)), TRUE);
       return;
     }
   }
@@ -2723,16 +2759,11 @@ static void resize_win_buffer(gpointer key, gpointer value, gpointer data)
 }
 
 //  scr_resize()
-/* -- Bookmarks panel (/bookmarks) ----------------------------------------- */
+/* -- Bookmarks buffer ([bookmarks]) -------------------------------------- */
 
-static struct {
-  gboolean active;
-  gboolean confirm_del;   // "d" has been pressed once
-  WINDOW *win;
-  PANEL *panel;
-  GSList *list;           // struct bookmark*, sorted
-  guint sel;
-} bmp;
+// The [bookmarks] special buffer is drawn in the chat window.  When the
+// input line is empty, some keys act on the selected bookmark.
+
 
 static void bookmark_free(gpointer p)
 {
@@ -2744,11 +2775,20 @@ static void bookmark_free(gpointer p)
   g_free(b);
 }
 
+// The name to display: none if it is the address of the room
+static const char *bookmark_name(const struct bookmark *b)
+{
+  if (!b->name || !*b->name || !g_ascii_strcasecmp(b->name, b->roomjid))
+    return NULL;
+  return b->name;
+}
+
 static gint bookmark_cmp(gconstpointer a, gconstpointer b)
 {
   const struct bookmark *x = a, *y = b;
-  gchar *kx = g_utf8_casefold(x->name ? x->name : x->roomjid, -1);
-  gchar *ky = g_utf8_casefold(y->name ? y->name : y->roomjid, -1);
+  const char *nx = bookmark_name(x), *ny = bookmark_name(y);
+  gchar *kx = g_utf8_casefold(nx ? nx : x->roomjid, -1);
+  gchar *ky = g_utf8_casefold(ny ? ny : y->roomjid, -1);
   gint r = g_utf8_collate(kx, ky);
   g_free(kx);
   g_free(ky);
@@ -2767,7 +2807,7 @@ static int text_cols(const char *text)
 {
   int n = 0;
   char *c;
-  for (c = (char *)text; *c; c = next_char(c)) {
+  for (c = (char *)(text ? text : ""); *c; c = next_char(c)) {
     int w = get_char_width(c);
     n += w > 0 ? w : 0;
   }
@@ -2782,6 +2822,8 @@ static void put_cell(WINDOW *win, int y, int x, int width, const char *text)
   char *c = (char *)(text ? text : "");
   gboolean cut = text_cols(c) > width;
 
+  if (width <= 0)
+    return;
   limit = cut ? width - 1 : width;
   wmove(win, y, x);
   for (; *c; c = next_char(c)) {
@@ -2793,7 +2835,7 @@ static void put_cell(WINDOW *win, int y, int x, int width, const char *text)
     waddnstr(win, c, next_char(c) - c);
     used += w;
   }
-  if (cut && width > 0) {
+  if (cut) {
     waddstr(win, utf8_mode ? "\u2026" : "~");
     used++;
   }
@@ -2801,135 +2843,156 @@ static void put_cell(WINDOW *win, int y, int x, int width, const char *text)
     waddch(win, ' ');
 }
 
+//  shrink(widths, n, avail)
+// Reduce the widest columns until they fit in avail columns.
+static void shrink(int *widths, int n, int avail)
+{
+  int total, i;
+  for (;;) {
+    int widest = 0;
+    for (total = 0, i = 0; i < n; i++) {
+      total += widths[i];
+      if (widths[i] > widths[widest])
+        widest = i;
+    }
+    if (total <= avail || widths[widest] <= 4)
+      return;
+    widths[widest]--;
+  }
+}
+
 static void bmp_draw(void)
 {
-  rect_t r = chat_rect(FALSE);
-  const frame_chars_t *fc = frame_chars();
-  int h = r.h, w = r.w, inner, rows, top, i, y;
-  int cw_name, cw_room, cw_nick;
+  WINDOW *win;
+  int h, w, rows, top, i, y;
+  int cw[3];      // Name, room, nick
+  int x_name, x_room, x_nick, x_pw;
+  const char *dash = utf8_mode ? "\u2014" : "-";
   GSList *l;
 
-  if (!bmp.active)
+  if (!bmp.active || !bmp.win)
     return;
   bmp_load();
-  if (h < 6 || w < 30) {
-    scr_LogPrint(LPRINT_NORMAL, "The window is too small for the bookmarks.");
-    return;
-  }
-  if (!bmp.win) {
-    bmp.win = newwin(h, w, r.y, r.x);
-    bmp.panel = new_panel(bmp.win);
-  } else {
-    wresize(bmp.win, h, w);
-    move_panel(bmp.panel, r.y, r.x);
-  }
-  top_panel(bmp.panel);
-  wbkgd(bmp.win, get_color(COLOR_GENERAL));
-  werase(bmp.win);
+  place_chat_window(bmp.win);
+  win = bmp.win->win;
+  getmaxyx(win, h, w);
+  wbkgd(win, get_color(COLOR_GENERAL));
+  werase(win);
 
-  // Frame
-  wattrset(bmp.win, named_style_attr("border", COLOR_GENERAL));
-  for (i = 0; i < w; i++) {
-    mvwaddstr(bmp.win, 0, i, fc ? fc->h : "-");
-    mvwaddstr(bmp.win, h - 1, i, fc ? fc->h : "-");
+  // Columns: autojoin (2), name, room, nick, password (2), as wide as
+  // their contents
+  cw[0] = 4; cw[1] = 4; cw[2] = 4;
+  for (l = bmp.list; l; l = l->next) {
+    struct bookmark *b = l->data;
+    const char *name = bookmark_name(b);
+    cw[0] = MAX(cw[0], text_cols(name ? name : dash) + 2);
+    cw[1] = MAX(cw[1], text_cols(b->roomjid) + 2);
+    cw[2] = MAX(cw[2], text_cols(b->nick) + 2);
   }
-  for (i = 1; i < h - 1; i++) {
-    mvwaddstr(bmp.win, i, 0, fc ? fc->v : "|");
-    mvwaddstr(bmp.win, i, w - 1, fc ? fc->v : "|");
-  }
-  mvwaddstr(bmp.win, 0, 0, fc ? fc->tl : "+");
-  mvwaddstr(bmp.win, 0, w - 1, fc ? fc->tr : "+");
-  mvwaddstr(bmp.win, h - 1, 0, fc ? fc->bl : "+");
-  mvwaddstr(bmp.win, h - 1, w - 1, fc ? fc->br : "+");
-  wattrset(bmp.win, named_style_attr("title_active", COLOR_GENERAL));
-  mvwaddstr(bmp.win, 0, 2, " Bookmarks ");
+  shrink(cw, 3, w - 2 - 2);
+  x_name = 2;
+  x_room = x_name + cw[0];
+  x_nick = x_room + cw[1];
+  x_pw = x_nick + cw[2];
 
-  inner = w - 2;
-  // Columns: autojoin (2), name, room, nick, password (3)
-  cw_name = (inner - 5) * 3 / 10;
-  cw_nick = (inner - 5) * 2 / 10;
-  cw_room = inner - 5 - cw_name - cw_nick;
-  wattrset(bmp.win, named_style_attr("dim", COLOR_GENERAL));
-  y = 1;
-  put_cell(bmp.win, y, 1, 2, " A");
-  put_cell(bmp.win, y, 3, cw_name, " Name");
-  put_cell(bmp.win, y, 3 + cw_name, cw_room, " Room");
-  put_cell(bmp.win, y, 3 + cw_name + cw_room, cw_nick, " Nick");
-  put_cell(bmp.win, y, 3 + cw_name + cw_room + cw_nick, 3, " P");
+  wattrset(win, named_style_attr("dim", COLOR_GENERAL));
+  put_cell(win, 0, 0, w, "");
+  mvwaddstr(win, 0, x_name, "Name");
+  mvwaddstr(win, 0, x_room, "Room");
+  mvwaddstr(win, 0, x_nick, "Nick");
+  if (x_pw + 2 <= w)
+    mvwaddstr(win, 0, x_pw, "Pw");
 
-  rows = h - 4;
+  rows = h - 2;
   top = (int)bmp.sel >= rows ? (int)bmp.sel - rows + 1 : 0;
   if (!bmp.list) {
-    wattrset(bmp.win, get_color(COLOR_INFO));
-    mvwaddnstr(bmp.win, 2, 2, xmpp_is_online() ?
+    wattrset(win, get_color(COLOR_INFO));
+    mvwaddnstr(win, 1, 1, xmpp_is_online() ?
                "No bookmarks.  n: new bookmark" :
-               "The bookmarks are not available (not connected).", inner - 2);
+               "The bookmarks are not available (not connected).", w - 1);
   }
   for (l = g_slist_nth(bmp.list, top), i = 0; l && i < rows;
        l = l->next, i++) {
     struct bookmark *b = l->data;
-    gboolean selected = (top + i == (int)bmp.sel);
-    gchar *name = g_strdup_printf(" %s", b->name ? b->name : "");
-    gchar *room = g_strdup_printf(" %s", b->roomjid);
-    gchar *nick = g_strdup_printf(" %s", b->nick ? b->nick : "");
-    y = 2 + i;
-    wattrset(bmp.win, selected ? get_color(COLOR_ROSTERSEL)
-                               : get_color(COLOR_GENERAL));
-    put_cell(bmp.win, y, 1, 2, b->autojoin ? (utf8_mode ? " \u25cf" : " *")
-                                           : (utf8_mode ? " \u25cb" : " -"));
-    put_cell(bmp.win, y, 3, cw_name, name);
-    put_cell(bmp.win, y, 3 + cw_name, cw_room, room);
-    put_cell(bmp.win, y, 3 + cw_name + cw_room, cw_nick, nick);
-    put_cell(bmp.win, y, 3 + cw_name + cw_room + cw_nick, 3,
-             b->password ? " *" : "");
-    g_free(name);
-    g_free(room);
-    g_free(nick);
+    const char *name = bookmark_name(b);
+    y = 1 + i;
+    wattrset(win, (top + i == (int)bmp.sel) ? get_color(COLOR_ROSTERSEL)
+                                            : get_color(COLOR_GENERAL));
+    put_cell(win, y, 0, w, "");
+    put_cell(win, y, 0, 2, b->autojoin ? (utf8_mode ? "\u25cf" : "*")
+                                       : (utf8_mode ? "\u25cb" : "-"));
+    put_cell(win, y, x_name, cw[0] - 1, name ? name : dash);
+    put_cell(win, y, x_room, cw[1] - 1, b->roomjid);
+    put_cell(win, y, x_nick, cw[2] - 1, b->nick ? b->nick : "");
+    if (x_pw + 2 <= w)
+      put_cell(win, y, x_pw, 2, b->password ? "*" : "");
   }
 
   // Help line
-  y = h - 2;
   if (bmp.confirm_del) {
-    wattrset(bmp.win, named_style_attr("status_dnd", COLOR_GENERAL));
-    put_cell(bmp.win, y, 1, inner, " Press d again to delete this bookmark");
+    wattrset(win, named_style_attr("status_dnd", COLOR_GENERAL));
+    put_cell(win, h - 1, 0, w, "Press d again to delete this bookmark");
   } else {
-    wattrset(bmp.win, named_style_attr("dim", COLOR_GENERAL));
-    put_cell(bmp.win, y, 1, inner, " Enter join  a autojoin  e edit  n new  "
-             "d delete  Esc close");
+    wattrset(win, named_style_attr("dim", COLOR_GENERAL));
+    put_cell(win, h - 1, 0, w, "Enter join  a autojoin  e edit  n new  "
+             "d delete  (when the input line is empty)");
   }
-  wattrset(bmp.win, get_color(COLOR_GENERAL));
+  wattrset(win, get_color(COLOR_GENERAL));
+}
+
+//  bmp_show()
+// Display the [bookmarks] buffer (it is the current buddy).
+static void bmp_show(void)
+{
+  if (!bmp.win) {
+    bmp.win = g_new0(winbuf_t, 1);
+    bmp.win->win = activechatWnd;
+    bmp.win->panel = activechatPanel;
+    bmp.win->bd = g_new0(buffdata_t, 1);
+  }
+  console_shown = FALSE;
+  bmp.active = TRUE;
+  bmp.confirm_del = FALSE;
+  chatmode = TRUE;
+  currentWindow = NULL;
+  top_panel(bmp.win->panel);
+  hide_panel(chatPanel);
+  bmp_draw();
+  draw_members();
+  scr_update_chat_status(FALSE);
+  top_panel(inputPanel);
   update_panels();
 }
 
-static void bmp_close(void)
+//  scr_bookmarks_changed()
+// The bookmarks have been received or changed.
+void scr_bookmarks_changed(void)
 {
-  bmp.active = FALSE;
-  bmp.confirm_del = FALSE;
-  if (bmp.panel)
-    del_panel(bmp.panel);
-  if (bmp.win)
-    delwin(bmp.win);
-  bmp.panel = NULL;
-  bmp.win = NULL;
-  g_slist_free_full(bmp.list, bookmark_free);
-  bmp.list = NULL;
-  if (chatmode)
-    scr_show_buddy_window();
-  else
+  if (bmp.active) {
+    bmp_draw();
     update_panels();
-  draw_frames();
+  }
 }
 
 //  scr_bookmarks()
-// Open the bookmarks panel.
+// Select the [bookmarks] buffer.
 void scr_bookmarks(void)
 {
-  bmp.active = TRUE;
-  bmp.confirm_del = FALSE;
-  bmp.sel = 0;
-  bmp_draw();
-  if (!bmp.win)
-    bmp.active = FALSE;
+  GList *l;
+
+  buddylist_build();
+  for (l = buddylist; l; l = l->next)
+    if ((buddy_gettype(l->data) & ROSTER_TYPE_SPECIAL) &&
+        !g_strcmp0(buddy_getname(l->data), SPECIAL_BUFFER_BOOKMARKS_ID))
+      break;
+  if (!l) {
+    scr_LogPrint(LPRINT_NORMAL, "The [bookmarks] buffer is hidden "
+                 "(roster_bookmarks option).");
+    return;
+  }
+  set_current_buddy(l);
+  bmp_show();
+  scr_update_roster();
 }
 
 static gchar *quoted_field(const char *key, const char *value)
@@ -2940,36 +3003,51 @@ static gchar *quoted_field(const char *key, const char *value)
   return r;
 }
 
+static int ex_or_search_mode;   // vi mode: an ex command is being typed
+
+//  set_command_line(cmd)
+// Put a command in the input line, with ":" in vi mode.
+static void set_command_line(const char *cmd)
+{
+  gchar *line = g_strdup_printf("%s%s", COMMAND_CHARSTR, cmd);
+  scr_set_inputline(line);
+  if (vi_mode && !chatmode)
+    ex_or_search_mode = TRUE;
+  g_free(line);
+}
+
+//  bmp_key(kcode)
+// Keys of the [bookmarks] buffer, when the input line is empty.
 static gboolean bmp_key(const keycode_t *kcode)
 {
   keyspec_t spec;
   struct bookmark *b;
   guint n;
 
-  if (!bmp.active)
+  if (!bmp.active || !chatmode || inputLine[0] || !current_buddy ||
+      g_strcmp0(buddy_getname(BUDDATA(current_buddy)),
+                SPECIAL_BUFFER_BOOKMARKS_ID))
     return FALSE;
   keycode_to_spec(kcode, &spec);
+  if (spec.mods & (KMOD_CTRL | KMOD_ALT))
+    return FALSE;
   n = g_slist_length(bmp.list);
   b = g_slist_nth_data(bmp.list, bmp.sel);
 
-  if (spec.key == 'd' && !spec.mods && b) {
-    if (bmp.confirm_del) {
+  if (spec.key == 'd') {
+    if (b && bmp.confirm_del) {
       xmpp_set_storage_bookmark(b->roomjid, NULL, NULL, NULL, 0, 0, 0, 0,
                                 NULL);
       bmp.confirm_del = FALSE;
     } else {
-      bmp.confirm_del = TRUE;
+      bmp.confirm_del = (b != NULL);
     }
     bmp_draw();
+    update_panels();
     return TRUE;
   }
   bmp.confirm_del = FALSE;
 
-  if (spec.mods & (KMOD_CTRL | KMOD_ALT)) {
-    if (spec.key == 'c' && spec.mods == KMOD_CTRL)
-      bmp_close();
-    return TRUE;
-  }
   switch (spec.key) {
     case KN_UP: case 'k':
       if (bmp.sel > 0)
@@ -2985,29 +3063,20 @@ static gboolean bmp_key(const keycode_t *kcode)
     case KN_END: case 'G':
       bmp.sel = n ? n - 1 : 0;
       break;
-    case KN_PGUP:
-      bmp.sel = bmp.sel > 10 ? bmp.sel - 10 : 0;
-      break;
-    case KN_PGDN:
-      bmp.sel = MIN(bmp.sel + 10, n ? n - 1 : 0);
-      break;
-    case KN_ESC: case 'q':
-      bmp_close();
-      return TRUE;
     case KN_ENTER:
       if (b) {
         gchar *jid = g_strdup(b->roomjid);
         gchar *nick = b->nick ? g_strdup(b->nick)
                               : default_muc_nickname(b->roomjid);
         gchar *pw = g_strdup(b->password);
-        bmp_close();
         xmpp_room_join(jid, nick, pw);
         scr_roster_jump_jid(jid);
         g_free(jid);
         g_free(nick);
         g_free(pw);
+        return TRUE;
       }
-      return TRUE;
+      return FALSE;
     case 'a':
       if (b)
         xmpp_bookmark_set(b->roomjid, b->name, b->nick, b->password,
@@ -3016,11 +3085,11 @@ static gboolean bmp_key(const keycode_t *kcode)
     case 'e':
     case 'n':
     {
-      GString *cmd = g_string_new("/bookmarks set ");
+      GString *cmd = g_string_new("bookmarks set ");
       if (spec.key == 'e' && b) {
         gchar *f;
         g_string_append(cmd, b->roomjid);
-        f = quoted_field("name", b->name);
+        f = quoted_field("name", bookmark_name(b));
         g_string_append(cmd, f);
         g_free(f);
         f = quoted_field("nick", b->nick);
@@ -3031,21 +3100,17 @@ static gboolean bmp_key(const keycode_t *kcode)
         g_free(f);
         g_string_append(cmd, b->autojoin ? " autojoin=on" : " autojoin=off");
       } else {
-        // A new bookmark, for the current room if it is one
-        if (current_buddy &&
-            (buddy_gettype(BUDDATA(current_buddy)) & ROSTER_TYPE_ROOM))
-          g_string_append(cmd, CURRENT_JID);
-        g_string_append(cmd, " nick= autojoin=on");
+        g_string_append(cmd, "room@server nick= autojoin=on");
       }
-      bmp_close();
-      scr_set_inputline(cmd->str);
+      set_command_line(cmd->str);
       g_string_free(cmd, TRUE);
       return TRUE;
     }
     default:
-      return TRUE;
+      return FALSE;   // A key for the input line
   }
   bmp_draw();
+  update_panels();
   return TRUE;
 }
 
@@ -3082,9 +3147,6 @@ void scr_resize(void)
   // Refresh current buddy window
   if (chatmode)
     scr_show_buddy_window();
-  // The bookmarks panel stays above
-  if (bmp.active)
-    bmp_draw();
 }
 
 #ifdef USE_SIGWINCH
@@ -6448,6 +6510,10 @@ void scr_do_update(void)
     else
       scr_update_main_status(TRUE);
   }
+  if (layout_stalled && Curses) {
+    layout_stalled = FALSE;
+    scr_resize();
+  }
   if (colors_stalled && Curses) {
     parse_colors();
     if (Layout.borders)
@@ -6851,7 +6917,6 @@ void scr_process_key(keycode_t kcode)
   int key = kcode.value;
   int display_char = FALSE;
   int vi_search = FALSE;
-  static int ex_or_search_mode = FALSE;
 
   if (paste_key(&kcode))
     return;

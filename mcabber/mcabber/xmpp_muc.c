@@ -43,10 +43,9 @@ static GSList *invitations = NULL;
 
 /* -- Room history and reconnections -------------------------------------- */
 
-// When we join a room again, we ask for the history since the last message
-// we have seen, a bit earlier in case the clocks differ: the messages that
-// we have already seen are dropped.
-#define HISTORY_MARGIN 300
+// When we join a room, it sends its last messages (the history).  Those we
+// have already seen (in a previous session) are displayed but not marked
+// as unread, those we have already displayed in this session are dropped.
 
 typedef struct {
   gchar *nick, *passwd;
@@ -55,6 +54,8 @@ typedef struct {
 
 static GHashTable *rooms_joined;  // Rooms to join again after a reconnection
 static GHashTable *joining;       // Rooms sending their history: first join?
+static GHashTable *shown;         // room -> keys of the messages displayed
+static gboolean last_old;         // The last message checked is an old one
 static guint save_source;
 
 static void room_join_free(gpointer p)
@@ -113,32 +114,75 @@ void muc_save_state(void)
   mucstate_save();
 }
 
-//  muc_message_check(room, nick, text, stanza_id, timestamp)
-// Record a message from a room.  Returns FALSE if it is a message of the
-// history that we have already received.
-gboolean muc_message_check(const char *room, const char *nick,
-                           const char *text, const char *stanza_id,
-                           time_t timestamp)
+static gboolean shown_check_add(const char *room, const char *key)
 {
-  gchar *id_key = NULL, *hash_key;
-  gboolean seen = FALSE;
+  gchar *rkey = room_key(room);
+  GHashTable *keys;
+
+  if (!shown)
+    shown = g_hash_table_new_full(g_str_hash, g_str_equal, g_free,
+                                  (GDestroyNotify)g_hash_table_destroy);
+  keys = g_hash_table_lookup(shown, rkey);
+  if (!keys) {
+    keys = g_hash_table_new_full(g_str_hash, g_str_equal, g_free, NULL);
+    g_hash_table_insert(shown, rkey, keys);
+  } else {
+    g_free(rkey);
+  }
+  if (g_hash_table_contains(keys, key))
+    return TRUE;
+  g_hash_table_add(keys, g_strdup(key));
+  return FALSE;
+}
+
+//  muc_message_check(room, nick, text, stanza_id, timestamp)
+// Record a message from a room.  Returns MUC_MSG_DROP if it has already
+// been displayed in this session (the history is sent again when we join
+// the room again), MUC_MSG_OLD for an old message (already seen, or the
+// history of a room joined for the first time), MUC_MSG_NEW otherwise.
+int muc_message_check(const char *room, const char *nick, const char *text,
+                      const char *stanza_id, time_t timestamp)
+{
+  gchar *id_key = NULL, *hash_key, *key;
+  int r = MUC_MSG_NEW;
+  gchar *rkey;
 
   state_open();
   if (stanza_id && *stanza_id)
     id_key = mucstate_key(stanza_id, NULL, NULL);
   hash_key = mucstate_key(NULL, nick, text);
-  if (timestamp)
-    seen = mucstate_seen(room, id_key ? id_key : hash_key);
-  if (!seen) {
+  key = id_key ? id_key : hash_key;
+
+  if (shown_check_add(room, key)) {
+    if (timestamp)
+      r = MUC_MSG_DROP;
+  } else if (timestamp) {
+    rkey = room_key(room);
+    if (mucstate_seen(room, key) ||
+        (joining && GPOINTER_TO_INT(g_hash_table_lookup(joining, rkey)) == 2))
+      r = MUC_MSG_OLD;
+    g_free(rkey);
+  }
+  if (r != MUC_MSG_DROP) {
     time_t when = timestamp ? timestamp : time(NULL);
     if (id_key)
       mucstate_add(room, id_key, when);
     mucstate_add(room, hash_key, when);
     schedule_save();
   }
+  last_old = (r == MUC_MSG_OLD);
   g_free(id_key);
   g_free(hash_key);
-  return !seen;
+  return r;
+}
+
+//  muc_take_old()
+// TRUE if the message being displayed is an old one: not marked as unread.
+gboolean muc_take_old(void)
+{
+  gboolean r = last_old;
+  last_old = FALSE;
+  return r;
 }
 
 //  muc_topic_check(room, topic)
@@ -161,22 +205,6 @@ gboolean muc_topic_check(const char *room, const char *topic)
   }
   g_free(key);
   return !same;
-}
-
-//  muc_backlog(room)
-// TRUE while we receive the history of a room that we join for the first
-// time: these old messages are not marked as unread.
-gboolean muc_backlog(const char *room)
-{
-  gchar *key;
-  gboolean r;
-
-  if (!joining)
-    return FALSE;
-  key = room_key(room);
-  r = GPOINTER_TO_INT(g_hash_table_lookup(joining, key)) == 2;
-  g_free(key);
-  return r;
 }
 
 //  muc_joined(room)
@@ -379,19 +407,11 @@ void xmpp_room_join(const char *room, const char *nickname, const char *passwd)
   if (passwd)
     lm_message_node_add_child(y, "password", passwd);
 
-  // History: only what we haven't seen (XEP-0045 7.2.15)
+  // The history sent by the room (see muc_message_check)
   state_open();
   {
     time_t last = mucstate_last(room);
     gchar *key = room_key(room);
-    // Not for a nickname change
-    if (last && !buddy_getinsideroom(room_elt->data)) {
-      char since[32];
-      time_t t = last - HISTORY_MARGIN;
-      strftime(since, sizeof since, "%Y-%m-%dT%H:%M:%SZ", gmtime(&t));
-      lm_message_node_set_attribute(
-          lm_message_node_add_child(y, "history", NULL), "since", since);
-    }
     // 2: first join, the history is only context; 1: missed messages
     if (!buddy_getinsideroom(room_elt->data))
       g_hash_table_replace(joining, key, GINT_TO_POINTER(last ? 1 : 2));
@@ -633,7 +653,9 @@ static bool muc_handle_join(const GSList *room_elt, const char *rname,
 
     buddy_setinsideroom(room_elt->data, TRUE);
     // Set the message flag unless we're already in the room buffer window
-    scr_setmsgflag_if_needed(roomjid, FALSE);
+    // (only if asked: the rooms are joined at each connection)
+    if (settings_opt_get_int("muc_flag_on_join"))
+      scr_setmsgflag_if_needed(roomjid, FALSE);
     // Add a message to the tracelog file
     mbuf = g_strdup_printf("You have joined %s as \"%s\"", roomjid, ournick);
     scr_LogPrint(LPRINT_LOGNORM, "%s", mbuf);

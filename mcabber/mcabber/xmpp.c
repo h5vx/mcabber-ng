@@ -1150,8 +1150,8 @@ static void gotmessage(LmMessageSubType type, const char *from,
   // Room history: drop the messages we have already received
   if (type == LM_MESSAGE_SUB_TYPE_GROUPCHAT && body && !subject &&
       roster_getnickname(bjid) &&
-      !muc_message_check(bjid, rname ? rname : "", body, stanza_id,
-                         timestamp))
+      muc_message_check(bjid, rname ? rname : "", body, stanza_id,
+                        timestamp) == MUC_MSG_DROP)
     goto gotmessage_return;
 
   if (subject && LM_MESSAGE_SUB_TYPE_GROUPCHAT == type) {
@@ -2573,6 +2573,7 @@ gboolean xmpp_bookmark_set(const char *roomjid, const char *name,
     send_storage(bookmarks);
     scr_LogPrint(LPRINT_LOGNORM, "Bookmarks updated.");
   }
+  scr_bookmarks_changed();
   return TRUE;
 }
 
@@ -2686,6 +2687,7 @@ void xmpp_set_storage_bookmark(const char *roomid, const char *name,
   if (!changed)
     return;
 
+  scr_bookmarks_changed();
   if (xmpp_is_online()) {
     send_storage(bookmarks);
     scr_LogPrint(LPRINT_LOGNORM, "Bookmarks updated.");

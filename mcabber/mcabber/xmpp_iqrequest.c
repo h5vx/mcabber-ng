@@ -700,6 +700,7 @@ static LmHandlerResult cb_storage_bookmarks(LmMessageHandler *h,
       if (bookmarks)
         lm_message_node_unref(bookmarks);
       bookmarks = lm_message_node_new("storage", "storage:bookmarks");
+      scr_bookmarks_changed();
       // We return 0 so that the IQ error message be
       // not displayed, as it isn't a real error.
     } else
@@ -725,6 +726,7 @@ static LmHandlerResult cb_storage_bookmarks(LmMessageHandler *h,
     lm_message_node_unref(bookmarks);
   lm_message_node_deep_ref(ansqry);
   bookmarks = ansqry;
+  scr_bookmarks_changed();
   return 0;
 }
 

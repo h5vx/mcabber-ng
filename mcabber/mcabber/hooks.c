@@ -282,8 +282,8 @@ static void hk_message_in_real(const char *bjid, const char *resname,
   if (carbon)
     message_flags |= HBB_PREFIX_CARBON;
 
-  // The history of a room joined for the first time is not "unread"
-  if (type == LM_MESSAGE_SUB_TYPE_GROUPCHAT && timestamp && muc_backlog(bjid))
+  // Old messages of the room history are not "unread"
+  if (type == LM_MESSAGE_SUB_TYPE_GROUPCHAT && muc_take_old())
     message_flags |= HBB_PREFIX_NOFLAG;
 
   if (type == LM_MESSAGE_SUB_TYPE_GROUPCHAT) {

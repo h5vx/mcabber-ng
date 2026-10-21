@@ -18,10 +18,12 @@
  */
 
 #include <string.h>
+#include <stdlib.h>
 
 #include "roster.h"
 #include "utils.h"
 #include "hooks.h"
+#include "settings.h"
 
 extern void hlog_save_state(void);
 
@@ -128,6 +130,7 @@ GList *alternate_buddy;
 GList *last_activity_buddy;
 
 static roster_t roster_special;
+static roster_t roster_bookmarks;
 
 static int  unread_jid_del(const char *jid);
 
@@ -141,6 +144,8 @@ void roster_init(void)
 {
   roster_special.name = SPECIAL_BUFFER_STATUS_ID;
   roster_special.type = ROSTER_TYPE_SPECIAL;
+  roster_bookmarks.name = SPECIAL_BUFFER_BOOKMARKS_ID;
+  roster_bookmarks.type = ROSTER_TYPE_SPECIAL;
 }
 
 /* ### Resources functions ### */
@@ -1008,6 +1013,11 @@ void buddylist_build(void)
   }
 
   buddylist = g_list_append(buddylist, &roster_special);
+  {
+    const char *opt = settings_opt_get("roster_bookmarks");
+    if (!opt || atoi(opt))
+      buddylist = g_list_append(buddylist, &roster_bookmarks);
+  }
 
   // Create the new list
   while (sl_roster_elt) {
