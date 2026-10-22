@@ -1,6 +1,7 @@
 -- The original mcabber look: no frames, input line at the bottom of the
 -- screen, original formats and colors.
 -- Usage: mc.theme(require "mcabber.themes.classic")
+---@type table<string, any>
 local theme = {
   name = "classic",
   options = { ui_borders = "none", input_position = "bottom" },

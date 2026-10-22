@@ -206,6 +206,23 @@ mc.theme(require("mcabber.themes.modern").with { caps = false })  -- none
 | `paste_mode` | `insert` (default), `confirm` or `send_lines` |
 | `ui_colors` | `auto`, `8`, `16`, `256` or `truecolor` |
 
+### Editor support
+
+The Lua API is described with [LuaCATS](https://luals.github.io/wiki/annotations/)
+annotations (`share/mcabber-ng/types/mcabber-ng.lua`): with
+lua-language-server (Neovim, VS Code…), the options, functions, events and
+formats are completed and checked while editing `init.lua`. Create
+`~/.config/mcabber-ng/.luarc.json` (use `/usr/local/share` for the static
+binaries):
+
+```json
+{
+  "runtime.version": "LuaJIT",
+  "workspace.library": [ "/usr/share/mcabber-ng/types",
+                         "/usr/share/mcabber-ng/lua" ]
+}
+```
+
 ## Keys
 
 | Key | |

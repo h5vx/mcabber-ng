@@ -5,6 +5,10 @@ GitHub release (see `packaging/release-notes.sh`).
 
 ## 1.1.2
 
+- Type annotations of the Lua API (LuaCATS), installed in
+  `share/mcabber-ng/types/`: with lua-language-server, the options,
+  functions, events and formats are completed and checked while editing
+  the configuration (see the README).
 - Link hints (`/url`): the labels can be typed whatever the case and the
   keyboard layout (Cyrillic layouts: the letter on the same key).  The
   same for the keys of the `[bookmarks]` buffer.
