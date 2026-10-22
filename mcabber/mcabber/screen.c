@@ -1675,11 +1675,16 @@ static void draw_link_hints(winbuf_t *win_entry, GList *hbuf_head,
   for (i = 0; i < shown->len && hints.labels[i]; i++) {
     hbuf_link_t *lk = &g_array_index(shown, hbuf_link_t, i);
     const char *label = hints.labels[i];
-    if (!g_str_has_prefix(label, hints.typed->str))
+    gchar *norm = links_normalize(label);
+    gboolean match = g_str_has_prefix(norm, hints.typed->str);
+    g_free(norm);
+    if (!match)
       continue;
     // Only the keys that remain to be typed are displayed
     mvwaddnstr(win_entry->win, rows[lk->line], lk->col,
-               label + hints.typed->len, -1);
+               g_utf8_offset_to_pointer(label,
+                                        g_utf8_strlen(hints.typed->str, -1)),
+               -1);
   }
   wattrset(win_entry->win, get_color(COLOR_GENERAL));
 }
@@ -1805,19 +1810,20 @@ static gboolean hints_key(const keycode_t *kcode)
       g_string_truncate(hints.typed, last - hints.typed->str);
     }
   } else if (spec.key > 0 && !(spec.mods & (KMOD_CTRL | KMOD_ALT))) {
-    char buf[8];
-    buf[g_unichar_to_utf8(spec.key, buf)] = '\0';
-    g_string_append(hints.typed, buf);
+    // The case and the keyboard layout don't matter
+    g_string_append_unichar(hints.typed, links_key_normalize(spec.key));
   } else {
     hints_stop();     // Esc, Ctrl-c or any other key: cancel
     return TRUE;
   }
 
   for (i = 0; hints.labels && hints.labels[i]; i++) {
-    if (g_str_has_prefix(hints.labels[i], hints.typed->str))
+    gchar *norm = links_normalize(hints.labels[i]);
+    if (g_str_has_prefix(norm, hints.typed->str))
       matches++;
-    if (!strcmp(hints.labels[i], hints.typed->str))
+    if (!strcmp(norm, hints.typed->str))
       found = i;
+    g_free(norm);
   }
   if (found >= 0) {
     gchar *url = g_strdup(g_array_index(hints.links, hbuf_link_t,
@@ -3031,6 +3037,13 @@ static gboolean bmp_key(const keycode_t *kcode)
   keycode_to_spec(kcode, &spec);
   if (spec.mods & (KMOD_CTRL | KMOD_ALT))
     return FALSE;
+  // The keyboard layout doesn't matter (but "G", the end, is not "g")
+  if (spec.key > 0) {
+    gboolean upper = g_unichar_isupper(spec.key);
+    spec.key = links_key_normalize(spec.key);
+    if (upper && spec.key == 'g')
+      spec.key = 'G';
+  }
   n = g_slist_length(bmp.list);
   b = g_slist_nth_data(bmp.list, bmp.sel);
 

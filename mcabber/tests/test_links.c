@@ -97,9 +97,29 @@ static void test_labels(void)
   g_strfreev(l);
 }
 
+static void test_normalize(void)
+{
+  gchar *s;
+
+  g_assert_cmpuint(links_key_normalize('a'), ==, 'a');
+  g_assert_cmpuint(links_key_normalize('A'), ==, 'a');
+  g_assert_cmpuint(links_key_normalize(0x0444), ==, 'a');   // ф
+  g_assert_cmpuint(links_key_normalize(0x0424), ==, 'a');   // Ф
+  g_assert_cmpuint(links_key_normalize(0x044b), ==, 's');   // ы
+  g_assert_cmpuint(links_key_normalize(0x0456), ==, 's');   // і
+  g_assert_cmpuint(links_key_normalize('1'), ==, '1');
+  s = links_normalize("ФыВа jk");
+  g_assert_cmpstr(s, ==, "asdf jk");
+  g_free(s);
+  s = links_normalize("олдж");   // jkl;
+  g_assert_cmpstr(s, ==, "jkl;");
+  g_free(s);
+}
+
 int main(int argc, char **argv)
 {
   g_test_init(&argc, &argv, NULL);
+  g_test_add_func("/links/normalize", test_normalize);
   g_test_add_func("/links/find", test_find);
   g_test_add_func("/links/labels", test_labels);
   return g_test_run();

@@ -3,6 +3,12 @@
 Each release has a section here: its text is the description of the
 GitHub release (see `packaging/release-notes.sh`).
 
+## Unreleased
+
+- Link hints (`/url`): the labels can be typed whatever the case and the
+  keyboard layout (Cyrillic layouts: the letter on the same key).  The
+  same for the keys of the `[bookmarks]` buffer.
+
 ## 1.1.1
 
 - Rooms: the history sent by a room is displayed again; its messages
