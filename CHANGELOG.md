@@ -3,7 +3,7 @@
 Each release has a section here: its text is the description of the
 GitHub release (see `packaging/release-notes.sh`).
 
-## Unreleased
+## 1.1.2
 
 - Link hints (`/url`): the labels can be typed whatever the case and the
   keyboard layout (Cyrillic layouts: the letter on the same key).  The
