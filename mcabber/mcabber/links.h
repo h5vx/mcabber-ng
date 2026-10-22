@@ -20,6 +20,12 @@ gchar *links_url(const char *text, const link_span_t *span);
 // shortest labels.  Returns a NULL-terminated array (g_strfreev).
 gchar **links_labels(const char *chars, guint n);
 
+// A typed key as it would be with a lowercase Latin (QWERTY) layout: the
+// case and the Cyrillic layouts (Russian, Ukrainian, Belarusian) don't
+// matter.
+gunichar links_key_normalize(gunichar c);
+gchar *links_normalize(const char *s);
+
 #endif /* __MCABBER_LINKS_H__ */
 
 /* vim: set et cindent cinoptions=>2\:2(0 ts=2 sw=2:  For Vim users... */

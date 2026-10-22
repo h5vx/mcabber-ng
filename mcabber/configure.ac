@@ -2,7 +2,7 @@
 # Process this file with autoconf to produce a configure script.
 
 AC_PREREQ([2.71])
-AC_INIT([mcabber-ng],[1.1.1],[https://github.com/h5vx/mcabber-ng/issues])
+AC_INIT([mcabber-ng],[1.1.2],[https://github.com/h5vx/mcabber-ng/issues])
 XC_AUTOMAKE
 AC_CONFIG_SRCDIR([mcabber])
 AC_CONFIG_HEADERS([mcabber/config.h])

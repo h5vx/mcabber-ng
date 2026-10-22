@@ -735,7 +735,7 @@ asciidoc.install();
 <h1>MCABBER-NG(1)</h1>
 <span id="author">Mikael BERTHE</span><br>
 <span id="email" class="monospaced">&lt;<a href="mailto:mcabber@lilotux.net">mcabber@lilotux.net</a>&gt;</span><br>
-<span id="revnumber">version 1.1.1,</span>
+<span id="revnumber">version 1.1.2,</span>
 <span id="revdate">October 2026</span>
 </div>
 <div id="content">
@@ -3289,6 +3289,18 @@ mc.version, mc.config_dir, mc.config_file
 <div class="paragraph"><p>Other Lua files can be loaded with require(): &lt;config dir&gt;/lua/ is in the
 module search path.  The <em>/lua</em> command runs Lua code at runtime ("/lua 1+1"
 prints 2) and <em>/source</em> runs a Lua file.</p></div>
+<div class="paragraph"><p>The API is described with LuaCATS annotations in
+/usr/share/mcabber-ng/types/mcabber-ng.lua: editors using lua-language-server
+complete and check the configuration with this file in
+&lt;config dir&gt;/.luarc.json:</p></div>
+<div class="literalblock">
+<div class="content monospaced">
+<pre>{
+  "runtime.version": "LuaJIT",
+  "workspace.library": [ "/usr/share/mcabber-ng/types",
+                         "/usr/share/mcabber-ng/lua" ]
+}</pre>
+</div></div>
 </div>
 </div>
 <div class="sect1">
@@ -3685,6 +3697,7 @@ $HOME/.config/mcabber-ng/omemo/     OMEMO keys, sessions and trust (one director
 $HOME/.config/mcabber-ng/rooms.ini  What has been seen of each room (last messages, topic), to avoid receiving the room history again
 /usr/share/mcabber-ng/help/         Default directory for online help files
 /usr/share/mcabber-ng/init.lua.example  Sample configuration file
+/usr/share/mcabber-ng/types/        Type annotations of the Lua API (lua-language-server)
 /usr/lib/mcabber-ng/                Default directory for modules</pre>
 </div></div>
 </div>
@@ -3723,9 +3736,9 @@ License (GPL).</p></div>
 <div id="footnotes"><hr></div>
 <div id="footer">
 <div id="footer-text">
-Version 1.1.1<br>
+Version 1.1.2<br>
 Last updated
- 2026-10-21 13:43:36 WITA
+ 2026-10-23 02:21:41 WITA
 </div>
 </div>
 </body>

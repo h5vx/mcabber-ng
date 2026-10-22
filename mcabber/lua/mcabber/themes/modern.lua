@@ -45,6 +45,7 @@ elseif caps == false then
 end
 local L, R = caps[1], caps[2]
 
+---@type mc.Theme
 local theme = {
   name = "modern",
 

@@ -1,7 +1,7 @@
 MCABBER-NG(1)
 =============
 Mikael BERTHE <mcabber@lilotux.net>
-v1.1.1, October 2026
+v1.1.2, October 2026
 
 NAME
 ----
@@ -690,6 +690,17 @@ Other Lua files can be loaded with require(): <config dir>/lua/ is in the
 module search path.  The '/lua' command runs Lua code at runtime ("/lua 1+1"
 prints 2) and '/source' runs a Lua file.
 
+The API is described with LuaCATS annotations in
+/usr/share/mcabber-ng/types/mcabber-ng.lua: editors using lua-language-server
+complete and check the configuration with this file in
+<config dir>/.luarc.json:
+
+    {
+      "runtime.version": "LuaJIT",
+      "workspace.library": [ "/usr/share/mcabber-ng/types",
+                             "/usr/share/mcabber-ng/lua" ]
+    }
+
 EVENTS
 ------
 Handlers receive a table describing the event.  Times are Unix timestamps,
@@ -944,6 +955,7 @@ The following files can be used by `mcabber(1)`:
     $HOME/.config/mcabber-ng/rooms.ini  What has been seen of each room (last messages, topic), to avoid receiving the room history again
     /usr/share/mcabber-ng/help/         Default directory for online help files
     /usr/share/mcabber-ng/init.lua.example  Sample configuration file
+    /usr/share/mcabber-ng/types/        Type annotations of the Lua API (lua-language-server)
     /usr/lib/mcabber-ng/                Default directory for modules
 
 BUGS

@@ -9,6 +9,10 @@ endif
 dist_pkgdata_DATA = init.lua.example
 
 # Lua modules: themes
+# Type annotations (LuaCATS) of the Lua API, for lua-language-server
+typesdir = $(pkgdatadir)/types
+dist_types_DATA = types/mcabber-ng.lua
+
 luathemedir = $(pkgdatadir)/lua/mcabber/themes
 dist_luatheme_DATA = lua/mcabber/themes/classic.lua \
 		     lua/mcabber/themes/modern.lua \

@@ -156,4 +156,42 @@ gchar **links_labels(const char *chars, guint n)
   return labels;
 }
 
+// Cyrillic letters and the Latin keys at the same place (JCUKEN/QWERTY)
+static const struct {
+  gunichar cyr;
+  char lat;
+} layout_map[] = {
+  { 0x0439, 'q' }, { 0x0446, 'w' }, { 0x0443, 'e' }, { 0x043a, 'r' },
+  { 0x0435, 't' }, { 0x043d, 'y' }, { 0x0433, 'u' }, { 0x0448, 'i' },
+  { 0x0449, 'o' }, { 0x0437, 'p' }, { 0x0445, '[' }, { 0x044a, ']' },
+  { 0x0444, 'a' }, { 0x044b, 's' }, { 0x0432, 'd' }, { 0x0430, 'f' },
+  { 0x043f, 'g' }, { 0x0440, 'h' }, { 0x043e, 'j' }, { 0x043b, 'k' },
+  { 0x0434, 'l' }, { 0x0436, ';' }, { 0x044d, '\'' }, { 0x044f, 'z' },
+  { 0x0447, 'x' }, { 0x0441, 'c' }, { 0x043c, 'v' }, { 0x0438, 'b' },
+  { 0x0442, 'n' }, { 0x044c, 'm' }, { 0x0431, ',' }, { 0x044e, '.' },
+  { 0x0451, '`' },
+  // Ukrainian and Belarusian letters
+  { 0x0456, 's' }, { 0x0457, ']' }, { 0x0454, '\'' }, { 0x0491, '`' },
+  { 0x045e, 'o' },
+};
+
+gunichar links_key_normalize(gunichar c)
+{
+  guint i;
+
+  c = g_unichar_tolower(c);
+  for (i = 0; i < G_N_ELEMENTS(layout_map); i++)
+    if (layout_map[i].cyr == c)
+      return layout_map[i].lat;
+  return c;
+}
+
+gchar *links_normalize(const char *s)
+{
+  GString *r = g_string_new(NULL);
+  for (; s && *s; s = g_utf8_next_char(s))
+    g_string_append_unichar(r, links_key_normalize(g_utf8_get_char(s)));
+  return g_string_free(r, FALSE);
+}
+
 /* vim: set et cindent cinoptions=>2\:2(0 ts=2 sw=2:  For Vim users... */

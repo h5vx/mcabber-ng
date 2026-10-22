@@ -4,10 +4,10 @@
 .\" Generator: DocBook XSL Stylesheets vsnapshot <http://docbook.sf.net/>
 .\"      Date: October 2026
 .\"    Manual: \ \&
-.\"    Source: \ \& 1.1.1
+.\"    Source: \ \& 1.1.2
 .\"  Language: English
 .\"
-.TH "MCABBER\-NG" "1" "October 2026" "\ \& 1\&.1\&.1" "\ \&"
+.TH "MCABBER\-NG" "1" "October 2026" "\ \& 1\&.1\&.2" "\ \&"
 .\" -----------------------------------------------------------------
 .\" * Define some portability stuff
 .\" -----------------------------------------------------------------
@@ -1743,6 +1743,22 @@ The mcabber\-ng version, configuration directory and file\&.
 .RE
 .sp
 Other Lua files can be loaded with require(): <config dir>/lua/ is in the module search path\&. The \fI/lua\fR command runs Lua code at runtime ("/lua 1+1" prints 2) and \fI/source\fR runs a Lua file\&.
+.sp
+The API is described with LuaCATS annotations in /usr/share/mcabber\-ng/types/mcabber\-ng\&.lua: editors using lua\-language\-server complete and check the configuration with this file in <config dir>/\&.luarc\&.json:
+.sp
+.if n \{\
+.RS 4
+.\}
+.nf
+{
+  "runtime\&.version": "LuaJIT",
+  "workspace\&.library": [ "/usr/share/mcabber\-ng/types",
+                         "/usr/share/mcabber\-ng/lua" ]
+}
+.fi
+.if n \{\
+.RE
+.\}
 .SH "EVENTS"
 .sp
 Handlers receive a table describing the event\&. Times are Unix timestamps, statuses are "online", "free", "dnd", "notavail", "away", "invisible" or "offline"\&.
@@ -2035,6 +2051,7 @@ $HOME/\&.config/mcabber\-ng/omemo/     OMEMO keys, sessions and trust (one direc
 $HOME/\&.config/mcabber\-ng/rooms\&.ini  What has been seen of each room (last messages, topic), to avoid receiving the room history again
 /usr/share/mcabber\-ng/help/         Default directory for online help files
 /usr/share/mcabber\-ng/init\&.lua\&.example  Sample configuration file
+/usr/share/mcabber\-ng/types/        Type annotations of the Lua API (lua\-language\-server)
 /usr/lib/mcabber\-ng/                Default directory for modules
 .fi
 .if n \{\
